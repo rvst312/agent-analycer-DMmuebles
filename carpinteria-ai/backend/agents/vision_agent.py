@@ -1,7 +1,10 @@
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 import anthropic
+from api.schemas.estimate import (ComponenteArmario, PlanoAnalizado,
+                                  TipoComponente)
 
 logger = logging.getLogger(__name__)
 
@@ -11,9 +14,9 @@ Tu objetivo es extraer información detallada sobre los componentes de madera, h
 Sigue las instrucciones cuidadosamente y utiliza el formato especificado.
 """
 
-def analyze_plan(image_base64: str, media_type: str = "image/jpeg", notes: Optional[str] = None) -> Dict[str, Any]:
+def analyze_plan(image_base64: str, media_type: str = "image/jpeg", notes: Optional[str] = None) -> PlanoAnalizado:
     """
-    Analiza una imagen en base64 usando Claude 3.5 Sonnet y devuelve un diccionario con los componentes.
+    Analiza una imagen en base64 usando Claude 3.5 Sonnet y devuelve el modelo Pydantic PlanoAnalizado con los componentes.
     """
     client = anthropic.Anthropic()
 
@@ -114,14 +117,26 @@ Notas adicionales del cliente: {notes if notes else "Ninguna"}
         
         # Guardar el razonamiento bruto para auditoría en el grafo
         result["raw_reasoning"] = raw_reasoning
-        return result
+        
+        # Validar con Pydantic
+        try:
+            return PlanoAnalizado(**result)
+        except Exception as e:
+            logger.error(f"Pydantic validation failed: {e}")
+            return PlanoAnalizado(
+                plano_id="error",
+                componentes=[],
+                confidence_score=0.0,
+                raw_reasoning=raw_reasoning,
+                error=f"Validation error: {str(e)}"
+            )
 
     except Exception as e:
         logger.error(f"Vision analysis failed: {e}")
-        return {
-            "plano_id": "error",
-            "componentes": [],
-            "confidence_score": 0.0,
-            "raw_reasoning": "",
-            "error": str(e)
-        }
+        return PlanoAnalizado(
+            plano_id="error",
+            componentes=[],
+            confidence_score=0.0,
+            raw_reasoning="",
+            error=str(e)
+        )
