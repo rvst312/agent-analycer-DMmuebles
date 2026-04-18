@@ -1,5 +1,7 @@
+import base64
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import anthropic
@@ -8,16 +10,40 @@ from api.schemas.estimate import (ComponenteArmario, PlanoAnalizado,
 
 logger = logging.getLogger(__name__)
 
+def _log_error(plano_id: str, error_type: str, details: Any, raw_text: Optional[str] = None):
+    log_data = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "plano_id": plano_id,
+        "error_type": error_type,
+        "details": str(details)
+    }
+    if raw_text:
+        log_data["raw_text"] = raw_text
+    logger.error(json.dumps(log_data))
+
 SYSTEM_PROMPT = """Eres un experto analista de planos arquitectónicos de carpintería.
 Tu objetivo es extraer información detallada sobre los componentes de madera, herrajes, y dimensiones exactas a partir de imágenes de planos o diagramas.
 
 Sigue las instrucciones cuidadosamente y utiliza el formato especificado.
 """
 
-def analyze_plan(image_base64: str, media_type: str = "image/jpeg", notes: Optional[str] = None) -> PlanoAnalizado:
+def analyze_plan(image_base64: str, media_type: str = "image/jpeg", notes: Optional[str] = None, plano_id: str = "unknown") -> PlanoAnalizado:
     """
     Analiza una imagen en base64 usando Claude 3.5 Sonnet y devuelve el modelo Pydantic PlanoAnalizado con los componentes.
     """
+    # Validar imagen base64
+    try:
+        base64.b64decode(image_base64, validate=True)
+    except Exception as e:
+        _log_error(plano_id, "CorruptImageError", e)
+        return PlanoAnalizado(
+            plano_id=plano_id,
+            componentes=[],
+            confidence_score=0.0,
+            raw_reasoning="",
+            error=f"Corrupt or invalid base64 image: {str(e)}"
+        )
+
     client = anthropic.Anthropic()
 
     prompt_content = f"""
@@ -107,12 +133,12 @@ Notas adicionales del cliente: {notes if notes else "Ninguna"}
         try:
             result = json.loads(json_content)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse vision_agent output: {e}")
+            _log_error(plano_id, "JSONDecodeError", e, raw_text=json_content)
             result = {
-                "plano_id": "error",
+                "plano_id": plano_id,
                 "componentes": [],
                 "confidence_score": 0.0,
-                "error": "JSON parse error"
+                "error": f"JSON parse error: {str(e)}"
             }
         
         # Guardar el razonamiento bruto para auditoría en el grafo
@@ -122,19 +148,37 @@ Notas adicionales del cliente: {notes if notes else "Ninguna"}
         try:
             return PlanoAnalizado(**result)
         except Exception as e:
-            logger.error(f"Pydantic validation failed: {e}")
+            _log_error(plano_id, "PydanticValidationError", e)
             return PlanoAnalizado(
-                plano_id="error",
+                plano_id=plano_id,
                 componentes=[],
                 confidence_score=0.0,
                 raw_reasoning=raw_reasoning,
                 error=f"Validation error: {str(e)}"
             )
 
-    except Exception as e:
-        logger.error(f"Vision analysis failed: {e}")
+    except anthropic.APITimeoutError as e:
+        _log_error(plano_id, "AnthropicAPITimeoutError", e)
         return PlanoAnalizado(
-            plano_id="error",
+            plano_id=plano_id,
+            componentes=[],
+            confidence_score=0.0,
+            raw_reasoning="",
+            error=f"API Timeout: {str(e)}"
+        )
+    except anthropic.APIStatusError as e:
+        _log_error(plano_id, "AnthropicAPIStatusError", f"Status code: {e.status_code}, Message: {str(e)}")
+        return PlanoAnalizado(
+            plano_id=plano_id,
+            componentes=[],
+            confidence_score=0.0,
+            raw_reasoning="",
+            error=f"API Status Error: {str(e)}"
+        )
+    except Exception as e:
+        _log_error(plano_id, "AnthropicGeneralError", e)
+        return PlanoAnalizado(
+            plano_id=plano_id,
             componentes=[],
             confidence_score=0.0,
             raw_reasoning="",

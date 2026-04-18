@@ -1,9 +1,11 @@
 """
 Grafo LangGraph con nodos, aristas e interrupt()
 """
-from typing import TypedDict, Dict, Any
+from typing import TypedDict, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 import logging
+import base64
+from agents.vision_agent import analyze_plan
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -11,6 +13,8 @@ logger = logging.getLogger(__name__)
 class GraphState(TypedDict):
     input_data: Dict[str, Any]
     status: str
+    error: Optional[str]
+    vision_result: Optional[Dict[str, Any]]
 
 def receive_input(state: GraphState):
     logger.info("Node: receive_input")
@@ -18,7 +22,28 @@ def receive_input(state: GraphState):
 
 def vision_analysis(state: GraphState):
     logger.info("Node: vision_analysis")
-    return {"status": "vision_analyzed"}
+    input_data = state.get("input_data", {})
+    file_path = input_data.get("file_path")
+    
+    if not file_path:
+        return {"status": "error", "error": "No file_path provided in input_data"}
+        
+    try:
+        with open(file_path, "rb") as f:
+            image_base64 = base64.b64encode(f.read()).decode("utf-8")
+    except Exception as e:
+        return {"status": "error", "error": f"Failed to read image file: {str(e)}"}
+        
+    # Extraer cliente_id u otro dato si se requiere como plano_id
+    plano_id = input_data.get("cliente_id", "unknown")
+    
+    # Llamar al agente
+    result = analyze_plan(image_base64=image_base64, plano_id=plano_id)
+    
+    if result.error:
+        return {"status": "error", "error": result.error, "vision_result": result.model_dump()}
+        
+    return {"status": "vision_analyzed", "vision_result": result.model_dump()}
 
 def extract_entities(state: GraphState):
     logger.info("Node: extract_entities")
@@ -59,7 +84,21 @@ workflow.add_node("notify_team", notify_team)
 
 workflow.set_entry_point("receive_input")
 workflow.add_edge("receive_input", "vision_analysis")
-workflow.add_edge("vision_analysis", "extract_entities")
+
+def check_vision_error(state: GraphState):
+    if state.get("status") == "error":
+        return "error"
+    return "continue"
+
+workflow.add_conditional_edges(
+    "vision_analysis",
+    check_vision_error,
+    {
+        "error": END,
+        "continue": "extract_entities"
+    }
+)
+
 workflow.add_edge("extract_entities", "rag_pricing")
 workflow.add_edge("rag_pricing", "consolidate")
 workflow.add_edge("consolidate", "human_approval")
