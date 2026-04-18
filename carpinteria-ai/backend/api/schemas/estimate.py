@@ -26,3 +26,15 @@ class PlanoAnalizado(BaseModel):
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     raw_reasoning: str
     error: Optional[str] = None
+
+class LineaPresupuesto(BaseModel):
+    descripcion: str
+    cantidad: int
+    precio_unitario: float
+    subtotal: float
+    precio_pendiente: bool = False
+    
+class Presupuesto(BaseModel):
+    plano_id: str
+    lineas: List[LineaPresupuesto]
+    total: float
