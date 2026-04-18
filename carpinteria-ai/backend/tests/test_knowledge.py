@@ -138,3 +138,44 @@ def test_delete_knowledge():
     found_all = next((item for item in data_all if item["id"] == "test_precio_004"), None)
     assert found_all is not None
     assert found_all["metadatos"]["activo"] is False
+
+def test_import_knowledge_csv():
+    # CSV content with 2 valid rows and 1 invalid row (missing material)
+    csv_content = """material,cliente,precio_unitario,unidad,categoria,texto,version,id
+Madera Roble,cliente_test_crud,150.0,m2,materia_prima,Texto roble,1.0,import_001
+,cliente_test_crud,20.0,unidad,herrajes,Tornillos,1.0,import_002
+Cristal,cliente_test_crud,80.5,m2,acabados,Texto cristal,1.0,import_003
+"""
+    files = {"file": ("test.csv", csv_content, "text/csv")}
+    
+    response = client.post("/knowledge/import", files=files)
+    assert response.status_code == 200
+    data = response.json()
+    
+    assert data["procesadas"] == 2
+    assert len(data["errores"]) == 1
+    assert data["errores"][0]["fila"] == 3
+    assert "material" in data["errores"][0]["error"]
+    
+    # Verify the inserted data
+    get_response = client.get("/knowledge?activos_only=true")
+    all_data = get_response.json()
+    inserted_ids = [item["id"] for item in all_data]
+    assert "import_001" in inserted_ids
+    assert "import_003" in inserted_ids
+    assert "import_002" not in inserted_ids
+
+def test_import_knowledge_invalid_file():
+    # Text file instead of CSV
+    files = {"file": ("test.txt", "some content", "text/plain")}
+    response = client.post("/knowledge/import", files=files)
+    assert response.status_code == 400
+    assert "debe ser un CSV" in response.json()["detail"]
+    
+def test_import_knowledge_missing_columns():
+    csv_content = """material,cliente,precio_unitario
+Madera,cliente_test_crud,100.0"""
+    files = {"file": ("test.csv", csv_content, "text/csv")}
+    response = client.post("/knowledge/import", files=files)
+    assert response.status_code == 400
+    assert "Faltan columnas requeridas" in response.json()["detail"]
