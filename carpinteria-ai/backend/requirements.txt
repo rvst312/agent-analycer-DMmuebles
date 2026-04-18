@@ -14,3 +14,4 @@ langgraph-checkpoint-postgres
 langgraph-checkpoint-sqlite
 psycopg[binary]
 psycopg-pool
+python-multipart

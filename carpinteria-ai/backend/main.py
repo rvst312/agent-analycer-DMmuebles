@@ -50,6 +50,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from api.routes.estimates import router as estimates_router
+
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "API de Carpintería AI en funcionamiento"}
@@ -58,9 +60,7 @@ def read_root():
 def health_check():
     return {"status": "healthy"}
 
-@app.post("/estimates")
-def create_estimate():
-    pass
+app.include_router(estimates_router)
 
 @app.post("/resume")
 def resume_workflow():
