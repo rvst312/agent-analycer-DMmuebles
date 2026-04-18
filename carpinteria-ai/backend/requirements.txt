@@ -9,3 +9,8 @@ python-dotenv
 pytest
 httpx
 sqlalchemy
+langgraph-checkpoint
+langgraph-checkpoint-postgres
+langgraph-checkpoint-sqlite
+psycopg[binary]
+psycopg-pool
