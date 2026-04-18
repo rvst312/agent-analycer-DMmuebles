@@ -6,6 +6,8 @@ from langgraph.graph import StateGraph, END
 import logging
 import base64
 from agents.vision_agent import analyze_plan
+from agents.pricing_agent import calculate_pricing
+from api.schemas.estimate import PlanoAnalizado
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,6 +17,7 @@ class GraphState(TypedDict):
     status: str
     error: Optional[str]
     vision_result: Optional[Dict[str, Any]]
+    pricing_result: Optional[Dict[str, Any]]
 
 def receive_input(state: GraphState):
     logger.info("Node: receive_input")
@@ -51,7 +54,23 @@ def extract_entities(state: GraphState):
 
 def rag_pricing(state: GraphState):
     logger.info("Node: rag_pricing")
-    return {"status": "priced"}
+    vision_result = state.get("vision_result")
+    
+    if not vision_result:
+        return {"status": "error", "error": "No vision_result found"}
+        
+    try:
+        plano = PlanoAnalizado(**vision_result)
+        cliente_id = state.get("input_data", {}).get("cliente_id", "unknown")
+        presupuesto = calculate_pricing(plano, cliente_id)
+        
+        return {
+            "status": "priced",
+            "pricing_result": presupuesto.model_dump()
+        }
+    except Exception as e:
+        logger.error(f"Error in pricing: {str(e)}")
+        return {"status": "error", "error": f"Failed in pricing: {str(e)}"}
 
 def consolidate(state: GraphState):
     logger.info("Node: consolidate")
@@ -85,14 +104,14 @@ workflow.add_node("notify_team", notify_team)
 workflow.set_entry_point("receive_input")
 workflow.add_edge("receive_input", "vision_analysis")
 
-def check_vision_error(state: GraphState):
+def check_error(state: GraphState):
     if state.get("status") == "error":
         return "error"
     return "continue"
 
 workflow.add_conditional_edges(
     "vision_analysis",
-    check_vision_error,
+    check_error,
     {
         "error": END,
         "continue": "extract_entities"
@@ -100,7 +119,14 @@ workflow.add_conditional_edges(
 )
 
 workflow.add_edge("extract_entities", "rag_pricing")
-workflow.add_edge("rag_pricing", "consolidate")
+workflow.add_conditional_edges(
+    "rag_pricing",
+    check_error,
+    {
+        "error": END,
+        "continue": "consolidate"
+    }
+)
 workflow.add_edge("consolidate", "human_approval")
 workflow.add_edge("human_approval", "send_to_holded")
 workflow.add_edge("send_to_holded", "notify_team")

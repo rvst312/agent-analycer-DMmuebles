@@ -35,14 +35,25 @@ def upsert_precio(id: str, texto: str, metadatos: dict) -> None:
         metadatas=[metadatos]
     )
 
-def query_precios(texto: str, cliente_id: str, n_results: int = 5) -> List[Dict[str, Any]]:
+def query_precios(texto: str, cliente_id: str, version: Optional[str] = None, n_results: int = 5) -> List[Dict[str, Any]]:
     """
-    Busca precios similares filtrando por cliente_id.
+    Busca precios similares filtrando por cliente_id y opcionalmente por version.
     """
+    where_clause: Dict[str, Any]
+    if version:
+        where_clause = {
+            "$and": [
+                {"cliente": {"$eq": cliente_id}},
+                {"version": {"$eq": version}}
+            ]
+        }
+    else:
+        where_clause = {"cliente": cliente_id}
+        
     results = precios_collection.query(
         query_texts=[texto],
         n_results=n_results,
-        where={"cliente": cliente_id}
+        where=where_clause
     )
     
     formatted_results = []

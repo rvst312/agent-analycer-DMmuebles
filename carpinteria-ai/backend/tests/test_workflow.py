@@ -17,7 +17,12 @@ def test_workflow_human_approval_interrupt(mock_file, mock_analyze_plan):
     class MockResult:
         error = None
         def model_dump(self):
-            return {}
+            return {
+                "plano_id": "test",
+                "componentes": [],
+                "confidence_score": 1.0,
+                "raw_reasoning": "test"
+            }
     mock_analyze_plan.return_value = MockResult()
     
     initial_state = {"input_data": {"file_path": "dummy.jpg"}, "status": "init"}
