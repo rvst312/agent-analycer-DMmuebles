@@ -11,9 +11,11 @@ class ChromaClient:
     def __init__(self, host: Optional[str] = None, port: Optional[int] = None, persist_path: str = "./chroma_data"):
         # Utilizamos PersistentClient si host/port no se proveen
         env_persist_path = os.environ.get("CHROMA_PERSIST_PATH", persist_path)
+        env_host = os.environ.get("CHROMA_HOST", host)
+        env_port = os.environ.get("CHROMA_PORT", port)
         
-        if host and port:
-            self.client = chromadb.HttpClient(host=host, port=port)
+        if env_host and env_port:
+            self.client = chromadb.HttpClient(host=env_host, port=int(env_port))
         else:
             self.client = chromadb.PersistentClient(path=env_persist_path)
             
