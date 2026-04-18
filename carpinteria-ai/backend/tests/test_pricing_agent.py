@@ -1,8 +1,43 @@
 import pytest
-from unittest.mock import patch
 import os
+import chromadb
+from unittest.mock import patch
+from chromadb.utils import embedding_functions
+
 from api.schemas.estimate import PlanoAnalizado, ComponenteArmario, TipoComponente
 from agents.pricing_agent import calculate_pricing, get_k_labor
+import rag.embeddings
+
+@pytest.fixture(scope="module")
+def mock_chroma_collection():
+    """
+    Fixture que crea un EphemeralClient de ChromaDB con datos mock.
+    Parchea precios_collection en rag.embeddings para que use este cliente en memoria.
+    """
+    client = chromadb.EphemeralClient()
+    emb_fn = embedding_functions.DefaultEmbeddingFunction()
+    collection = client.create_collection(name="test_precios", embedding_function=emb_fn)
+    
+    # Mock prices for tablero, puerta, herraje
+    # Client: "cliente_1"
+    docs = [
+        "Tablero MDF Roble natural tablero",
+        "Puerta madera Roble barnizado puerta",
+        "Herraje Acero inoxidable mate herraje",
+        "Tablero Pino natural tablero" # For another client
+    ]
+    ids = ["tablero_1", "puerta_1", "herraje_1", "tablero_2"]
+    metadatas = [
+        {"material": "Roble", "cliente": "cliente_1", "precio_unitario": 20.0, "unidad": "m2", "version": "1.0", "categoria": "materia_prima", "activo": True},
+        {"material": "Roble", "cliente": "cliente_1", "precio_unitario": 50.0, "unidad": "m2", "version": "1.0", "categoria": "materia_prima", "activo": True},
+        {"material": "Acero", "cliente": "cliente_1", "precio_unitario": 5.0, "unidad": "unidad", "version": "1.0", "categoria": "herraje", "activo": True},
+        {"material": "Pino", "cliente": "cliente_2", "precio_unitario": 10.0, "unidad": "m2", "version": "1.0", "categoria": "materia_prima", "activo": True}
+    ]
+    collection.add(documents=docs, ids=ids, metadatas=metadatas)
+    
+    # Patch the collection in rag.embeddings
+    with patch.object(rag.embeddings, 'precios_collection', collection):
+        yield collection
 
 def test_get_k_labor(monkeypatch):
     monkeypatch.setenv("K_LABOR_TABLERO", "15.5")
@@ -12,75 +47,105 @@ def test_get_k_labor(monkeypatch):
     assert get_k_labor("puerta") == 20.0
     assert get_k_labor("cajon") == 0.0 # No set, defaults to 0.0
 
-@patch("agents.pricing_agent.query_precios")
-def test_calculate_pricing(mock_query_precios, monkeypatch):
-    monkeypatch.setenv("K_LABOR_TABLERO", "5.0")
-    monkeypatch.setenv("K_LABOR_HERRAJE", "1.0")
-    
-    # Mock RAG response
-    def mock_query(texto, cliente_id, version=None, n_results=1):
-        if "Roble" in texto:
-            return [{
-                "id": "1",
-                "metadatos": {"precio_unitario": "50.0"}
-            }]
-        return [] # No encontrado
-        
-    mock_query_precios.side_side_effect = mock_query
-    mock_query_precios.side_effect = mock_query
+def test_calculate_pricing_correct_c_total(mock_chroma_collection, monkeypatch):
+    """Test: cálculo de C_total correcto para tablero de 2m x 0.6m a precio conocido"""
+    monkeypatch.setenv("K_LABOR_TABLERO", "10.0")
     
     plano = PlanoAnalizado(
-        plano_id="plano_test_1",
+        plano_id="plano_1",
         confidence_score=0.9,
         raw_reasoning="test",
         componentes=[
             ComponenteArmario(
                 tipo=TipoComponente.TABLERO,
                 material="Roble",
-                acabado="Barnizado",
-                ancho_cm=100.0,
+                acabado="natural",
+                ancho_cm=60.0,
                 largo_cm=200.0,
-                cantidad=2
-            ),
-            ComponenteArmario(
-                tipo=TipoComponente.HERRAJE,
-                material="Acero",
-                acabado="Mate",
-                ancho_cm=10.0,
-                largo_cm=10.0,
-                cantidad=4
+                cantidad=1
             )
         ]
     )
     
-    presupuesto = calculate_pricing(plano, "cliente_test")
+    presupuesto = calculate_pricing(plano, "cliente_1")
     
-    assert presupuesto.plano_id == "plano_test_1"
-    assert len(presupuesto.lineas) == 2
+    # Area = 2m * 0.6m = 1.2 m2
+    # Precio unitario = 20.0 (from mock ChromaDB)
+    # C_total unitario = (1.2 * 20.0) + 10.0 (k_labor) = 24.0 + 10.0 = 34.0
+    # Total = 34.0
     
-    # Linea 1: Tablero Roble (precio_unitario 50.0)
-    # Area: 1m x 2m = 2m2
-    # Coste material por unidad: 2m2 * 50 = 100
-    # K_labor: 5.0
-    # Coste total por unidad: 105.0
-    # Subtotal para 2 unidades: 210.0
-    linea1 = presupuesto.lineas[0]
-    assert linea1.precio_pendiente is False
-    assert linea1.cantidad == 2
-    assert linea1.precio_unitario == 105.0
-    assert linea1.subtotal == 210.0
+    assert len(presupuesto.lineas) == 1
+    linea = presupuesto.lineas[0]
     
-    # Linea 2: Herraje Acero (precio_pendiente True)
-    # Area: 0.1m x 0.1m = 0.01m2
-    # Precio: 0.0 (pendiente)
-    # K_labor: 1.0
-    # Coste total por unidad: 1.0
-    # Subtotal para 4 unidades: 4.0
-    # Aunque subtotal es calculado, si precio_pendiente es True, no se debe sumar al total del presupuesto según implementación actual
-    # Wait, my implementation sum total only if not precio_pendiente:
-    # "if not precio_pendiente: total += subtotal"
-    linea2 = presupuesto.lineas[1]
-    assert linea2.precio_pendiente is True
-    assert linea2.subtotal == 4.0
+    assert linea.precio_pendiente is False
+    assert linea.precio_unitario == 34.0
+    assert linea.subtotal == 34.0
+    assert presupuesto.total == 34.0
+
+def test_calculate_pricing_precio_pendiente(mock_chroma_collection, monkeypatch):
+    """Test: componente sin precio devuelve precio_pendiente: true"""
+    monkeypatch.setenv("K_LABOR_CAJON", "5.0")
     
-    assert presupuesto.total == 210.0
+    plano = PlanoAnalizado(
+        plano_id="plano_2",
+        confidence_score=0.9,
+        raw_reasoning="test",
+        componentes=[
+            ComponenteArmario(
+                tipo=TipoComponente.CAJON,
+                material="Cristal", # No tenemos precio de cristal para cliente_1
+                acabado="templado",
+                ancho_cm=50.0,
+                largo_cm=50.0,
+                cantidad=2
+            )
+        ]
+    )
+    
+    presupuesto = calculate_pricing(plano, "cliente_1")
+    
+    assert len(presupuesto.lineas) == 1
+    linea = presupuesto.lineas[0]
+    
+    assert linea.precio_pendiente is True
+    # Area = 0.5 * 0.5 = 0.25
+    # Precio unitario RAG = 0
+    # C_total unitario = 0 + 5.0 = 5.0
+    # Subtotal = 5.0 * 2 = 10.0
+    assert linea.precio_unitario == 5.0
+    assert linea.subtotal == 10.0
+    
+    # Total del presupuesto no debe sumar componentes con precio pendiente
+    assert presupuesto.total == 0.0
+
+def test_calculate_pricing_filter_by_cliente(mock_chroma_collection, monkeypatch):
+    """Test: filtro por cliente_id no devuelve precios de otro cliente"""
+    monkeypatch.setenv("K_LABOR_TABLERO", "10.0")
+    
+    plano = PlanoAnalizado(
+        plano_id="plano_3",
+        confidence_score=0.9,
+        raw_reasoning="test",
+        componentes=[
+            ComponenteArmario(
+                tipo=TipoComponente.TABLERO,
+                material="Pino",
+                acabado="natural",
+                ancho_cm=100.0,
+                largo_cm=100.0,
+                cantidad=1
+            )
+        ]
+    )
+    
+    # Si buscamos con cliente_1, no debe encontrar el precio del Pino que es de cliente_2
+    presupuesto_c1 = calculate_pricing(plano, "cliente_1")
+    assert presupuesto_c1.lineas[0].precio_pendiente is True
+    
+    # Si buscamos con cliente_2, debe encontrar el precio del Pino (10.0)
+    presupuesto_c2 = calculate_pricing(plano, "cliente_2")
+    assert presupuesto_c2.lineas[0].precio_pendiente is False
+    
+    # Area 1m2 * 10.0 = 10.0 + k_labor 10.0 = 20.0
+    assert presupuesto_c2.lineas[0].precio_unitario == 20.0
+
