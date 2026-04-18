@@ -2,7 +2,7 @@ import pytest
 import os
 import shutil
 from rag.chroma_client import ChromaClient
-from rag.embeddings import EmbeddingModel
+from rag.embeddings import EmbeddingModel, upsert_precio, query_precios, seed_datos_ejemplo, precios_collection
 
 # Use a temporary directory for ChromaDB tests
 TEST_CHROMA_DIR = "./test_chroma_data"
@@ -89,3 +89,45 @@ def test_embeddings():
     batch = model.embed_batch([text, "Pino tablero crudo"])
     assert len(batch) == 2
     assert len(batch[0]) == len(embedding)
+
+def test_upsert_y_query_precios():
+    # Insertar un precio válido
+    metadatos = {
+        "material": "TestMaterial",
+        "cliente": "test_cliente_xyz",
+        "precio_unitario": "100.5",
+        "unidad": "m2",
+        "version": "1.0",
+        "categoria": "materia_prima"
+    }
+    
+    upsert_precio("test_id_1", "Texto de prueba", metadatos)
+    
+    # Buscar el precio
+    resultados = query_precios("Texto de prueba", "test_cliente_xyz", n_results=1)
+    
+    assert len(resultados) > 0
+    assert resultados[0]["id"] == "test_id_1"
+    assert resultados[0]["metadatos"]["precio_unitario"] == 100.5
+    
+    # Test error en metadatos incompletos
+    with pytest.raises(ValueError, match="Metadatos incompletos"):
+        upsert_precio("test_id_2", "Texto", {"material": "algo"})
+
+def test_seed_datos_ejemplo():
+    seed_datos_ejemplo()
+    # Verificar que el cliente_test_1 tiene al menos 2 registros
+    resultados = query_precios("roble", "cliente_test_1", n_results=5)
+    assert len(resultados) >= 1
+    
+    # Limpiar los documentos de test
+    precios_collection.delete(
+        where={"cliente": "test_cliente_xyz"}
+    )
+    precios_collection.delete(
+        where={"cliente": "cliente_test_1"}
+    )
+    precios_collection.delete(
+        where={"cliente": "cliente_test_2"}
+    )
+
