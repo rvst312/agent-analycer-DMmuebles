@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+langgraph
+langchain-anthropic
+chromadb
+anthropic
+pydantic
+python-dotenv
+pytest
+httpx
+sqlalchemy

@@ -1,0 +1,3 @@
+"""
+CRUD precios en ChromaDB
+"""
