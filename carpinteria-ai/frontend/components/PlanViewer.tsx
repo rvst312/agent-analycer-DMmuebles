@@ -1,1 +1,0 @@
-// Visualizador del plano original

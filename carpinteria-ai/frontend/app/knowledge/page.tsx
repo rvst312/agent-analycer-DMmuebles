@@ -1,1 +1,0 @@
-// Gestión RAG/precios (CMS)
