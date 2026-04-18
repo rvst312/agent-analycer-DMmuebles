@@ -44,17 +44,20 @@ def calculate_pricing(plano: PlanoAnalizado, cliente_id: str) -> Presupuesto:
         if resultados:
             # Tomamos el primer resultado
             mejor_resultado = resultados[0]
-            metadatos = mejor_resultado.get("metadatos", {})
-            # Validamos que el resultado tenga un score/distancia aceptable si es necesario
-            # En ChromaDB L2 distance, valores más bajos son mejores.
-            # Por ahora confiamos en el top 1.
+            distancia = mejor_resultado.get("distancia", 0.0)
             
-            if "precio_unitario" in metadatos:
-                try:
-                    precio_unitario = float(metadatos["precio_unitario"])
-                    precio_pendiente = False
-                except (ValueError, TypeError):
-                    logger.error(f"precio_unitario inválido en RAG para {query_text}: {metadatos.get('precio_unitario')}")
+            # En ChromaDB L2 distance, valores más bajos son mejores.
+            # Solo consideramos válido si la distancia es menor a un umbral (ej. 1.0)
+            if distancia < 1.0:
+                metadatos = mejor_resultado.get("metadatos", {})
+                if "precio_unitario" in metadatos:
+                    try:
+                        precio_unitario = float(metadatos["precio_unitario"])
+                        precio_pendiente = False
+                    except (ValueError, TypeError):
+                        logger.error(f"precio_unitario inválido en RAG para {query_text}: {metadatos.get('precio_unitario')}")
+            else:
+                logger.info(f"No se encontró precio confiable para {query_text}. Distancia: {distancia}")
         
         # 4. Calcular coste base por unidad
         # Area en m2 * precio por m2
