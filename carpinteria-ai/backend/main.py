@@ -51,6 +51,7 @@ app.add_middleware(
 )
 
 from api.routes.estimates import router as estimates_router
+from api.routes.knowledge import router as knowledge_router
 
 @app.get("/")
 def read_root():
@@ -61,6 +62,7 @@ def health_check():
     return {"status": "healthy"}
 
 app.include_router(estimates_router)
+app.include_router(knowledge_router)
 
 @app.post("/resume")
 def resume_workflow():

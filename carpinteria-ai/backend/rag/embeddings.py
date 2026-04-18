@@ -29,26 +29,90 @@ def upsert_precio(id: str, texto: str, metadatos: dict) -> None:
     except ValueError:
         raise ValueError("precio_unitario debe ser un número (float)")
 
+    # Añadir campo 'activo' por defecto si no existe
+    if "activo" not in metadatos:
+        metadatos["activo"] = True
+
     precios_collection.upsert(
         ids=[id],
         documents=[texto],
         metadatas=[metadatos]
     )
 
+def get_precios(skip: int = 0, limit: int = 10, activos_only: bool = False) -> List[Dict[str, Any]]:
+    """
+    Lista los precios con paginación. Opcionalmente filtra por activo=True.
+    """
+    where_clause = {"activo": True} if activos_only else None
+    results = precios_collection.get(
+        limit=limit,
+        offset=skip,
+        where=where_clause
+    )
+    
+    formatted_results = []
+    if results and results.get("ids"):
+        for i in range(len(results["ids"])):
+            formatted_results.append({
+                "id": results["ids"][i],
+                "documento": results["documents"][i] if results.get("documents") else "",
+                "metadatos": results["metadatas"][i] if results.get("metadatas") else {}
+            })
+    return formatted_results
+
+def update_precio_metadata(id: str, metadatos_update: dict) -> None:
+    """
+    Actualiza solo los metadatos de un precio existente sin re-indexar el embedding.
+    """
+    # Obtener el precio actual para no sobrescribir metadatos que no se envíen
+    current = precios_collection.get(ids=[id])
+    if not current or not current.get("ids") or len(current["ids"]) == 0:
+        raise ValueError(f"No se encontró el precio con id {id}")
+        
+    current_metadata = current["metadatas"][0] if current.get("metadatas") else {}
+    
+    # Actualizar con los nuevos valores
+    for k, v in metadatos_update.items():
+        if v is not None:
+            if k == "precio_unitario":
+                try:
+                    current_metadata[k] = float(v)
+                except ValueError:
+                    raise ValueError("precio_unitario debe ser un número (float)")
+            else:
+                current_metadata[k] = v
+                
+    precios_collection.update(
+        ids=[id],
+        metadatas=[current_metadata]
+    )
+
+def delete_precio_logico(id: str) -> None:
+    """
+    Realiza un borrado lógico marcando el precio como inactivo.
+    """
+    update_precio_metadata(id, {"activo": False})
+
 def query_precios(texto: str, cliente_id: str, version: Optional[str] = None, n_results: int = 5) -> List[Dict[str, Any]]:
     """
-    Busca precios similares filtrando por cliente_id y opcionalmente por version.
+    Busca precios similares filtrando por cliente_id, activo=True y opcionalmente por version.
     """
     where_clause: Dict[str, Any]
     if version:
         where_clause = {
             "$and": [
                 {"cliente": {"$eq": cliente_id}},
-                {"version": {"$eq": version}}
+                {"version": {"$eq": version}},
+                {"activo": {"$eq": True}}
             ]
         }
     else:
-        where_clause = {"cliente": cliente_id}
+        where_clause = {
+            "$and": [
+                {"cliente": {"$eq": cliente_id}},
+                {"activo": {"$eq": True}}
+            ]
+        }
         
     results = precios_collection.query(
         query_texts=[texto],
