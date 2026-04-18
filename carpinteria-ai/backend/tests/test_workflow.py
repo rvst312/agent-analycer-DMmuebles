@@ -41,7 +41,7 @@ async def test_workflow_human_approval_interrupt(mock_file, mock_analyze_plan, m
             }
     mock_execute_consolidation.return_value = MockConsolidado()
 
-    initial_state = {"input_data": {"file_path": "dummy.jpg"}, "status": "init"}
+    initial_state = {"archivo_path": "dummy.jpg", "status": "init"}
     config = {"configurable": {"thread_id": "test_thread_1"}}
 
     # Ejecutamos el grafo

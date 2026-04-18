@@ -35,11 +35,10 @@ async def process_estimate(estimate_id: str, file_path: str, cliente_id: str):
             
             config = {"configurable": {"thread_id": estimate_id}}
             initial_state = {
-                "input_data": {
-                    "file_path": file_path,
-                    "cliente_id": cliente_id
-                },
-                "status": "pending"
+                "archivo_path": file_path,
+                "cliente_id": cliente_id,
+                "status": "pending",
+                "thread_id": estimate_id
             }
             
             await graph_with_cp.ainvoke(initial_state, config=config)
