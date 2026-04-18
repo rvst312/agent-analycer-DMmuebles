@@ -29,6 +29,7 @@ Base = declarative_base()
 
 async def init_db():
     """Inicializa las tablas de SQLAlchemy."""
+    import db.models  # Import models here to register them with Base
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Tablas de SQLAlchemy creadas/verificadas.")
