@@ -1,13 +1,15 @@
 """
 Grafo LangGraph con nodos, aristas e interrupt()
 """
-from typing import TypedDict, Dict, Any, Optional
-from langgraph.graph import StateGraph, END
-import logging
 import base64
-from agents.vision_agent import analyze_plan
+import logging
+from typing import Any, Dict, Optional, TypedDict
+
+from agents.consolidation_agent import execute_consolidation
 from agents.pricing_agent import calculate_pricing
-from api.schemas.estimate import PlanoAnalizado
+from agents.vision_agent import analyze_plan
+from api.schemas.estimate import PlanoAnalizado, Presupuesto
+from langgraph.graph import END, StateGraph
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,6 +20,7 @@ class GraphState(TypedDict):
     error: Optional[str]
     vision_result: Optional[Dict[str, Any]]
     pricing_result: Optional[Dict[str, Any]]
+    consolidation_result: Optional[Dict[str, Any]]
 
 def receive_input(state: GraphState):
     logger.info("Node: receive_input")
@@ -72,9 +75,26 @@ def rag_pricing(state: GraphState):
         logger.error(f"Error in pricing: {str(e)}")
         return {"status": "error", "error": f"Failed in pricing: {str(e)}"}
 
-def consolidate(state: GraphState):
+async def consolidate(state: GraphState):
     logger.info("Node: consolidate")
-    return {"status": "consolidated"}
+    pricing_result = state.get("pricing_result")
+    
+    if not pricing_result:
+        return {"status": "error", "error": "No pricing_result found"}
+        
+    try:
+        presupuesto = Presupuesto(**pricing_result)
+        cliente_id = state.get("input_data", {}).get("cliente_id", "unknown")
+        
+        consolidado = await execute_consolidation(presupuesto, cliente_id)
+        
+        return {
+            "status": "consolidated",
+            "consolidation_result": consolidado.model_dump()
+        }
+    except Exception as e:
+        logger.error(f"Error in consolidation: {str(e)}")
+        return {"status": "error", "error": f"Failed in consolidation: {str(e)}"}
 
 def human_approval(state: GraphState):
     logger.info("Node: human_approval (HITL)")
@@ -127,7 +147,14 @@ workflow.add_conditional_edges(
         "continue": "consolidate"
     }
 )
-workflow.add_edge("consolidate", "human_approval")
+workflow.add_conditional_edges(
+    "consolidate",
+    check_error,
+    {
+        "error": END,
+        "continue": "human_approval"
+    }
+)
 workflow.add_edge("human_approval", "send_to_holded")
 workflow.add_edge("send_to_holded", "notify_team")
 workflow.add_edge("notify_team", END)
