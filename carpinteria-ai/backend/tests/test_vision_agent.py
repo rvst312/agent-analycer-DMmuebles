@@ -79,7 +79,8 @@ def test_analyze_plan_json_error(mock_anthropic):
     mock_response.content = [mock_block]
     mock_client.messages.create.return_value = mock_response
 
-    result = analyze_plan("dummy")
+    dummy_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    result = analyze_plan(dummy_base64)
     
     assert result.confidence_score == 0.0
     assert result.error is not None and "JSON parse error" in result.error
@@ -109,7 +110,8 @@ def test_analyze_plan_pydantic_error(mock_anthropic):
     mock_response.content = [mock_block]
     mock_client.messages.create.return_value = mock_response
 
-    result = analyze_plan("dummy")
+    dummy_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    result = analyze_plan(dummy_base64)
     
     assert result.confidence_score == 0.0
     assert result.error is not None and "Validation error" in result.error
