@@ -6,8 +6,11 @@ from agents.consolidation_agent import execute_consolidation
 from agents.pricing_agent import calculate_pricing
 from agents.vision_agent import analyze_plan
 from api.schemas.estimate import PlanoAnalizado, Presupuesto
+from db.models import JobLogModel
+from db.persistence import get_session
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
+from services.notification_service import notify_n8n_error
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -142,9 +145,43 @@ def notify_team(state: GraphState):
         logger.info("Notificando al equipo: Presupuesto aprobado y procesado exitosamente.")
     return {"status": "completed"}
 
-def handle_error(state: GraphState):
-    logger.error(f"Node: handle_error. Error: {state.get('error')}")
-    return {"status": "handled_error"}
+async def handle_error(state: GraphState):
+    error_msg = state.get('error', 'Unknown error')
+    logger.error(f"Node: handle_error. Error: {error_msg}")
+    
+    plano_id = state.get("plano_id", "unknown")
+    job_id = state.get("thread_id", "unknown")
+    
+    # Intentar determinar el nodo que falló basado en el status o error
+    nodo = "unknown"
+    if "pricing" in error_msg.lower():
+        nodo = "rag_pricing"
+    elif "consolidation" in error_msg.lower() or "consolidate" in error_msg.lower():
+        nodo = "consolidate"
+    elif "file_path" in error_msg.lower() or "image" in error_msg.lower() or "vision" in error_msg.lower():
+        nodo = "vision_analysis"
+    elif "plano_analizado" in error_msg.lower():
+        nodo = "rag_pricing"
+        
+    # Registramos en la BD
+    try:
+        async for session in get_session():
+            job_log = JobLogModel(
+                job_id=job_id,
+                nodo=nodo,
+                error_type="workflow_error",
+                mensaje=error_msg
+            )
+            session.add(job_log)
+            await session.commit()
+            break # Solo necesitamos una sesión
+    except Exception as e:
+        logger.error(f"Error al guardar job_log en BD: {e}")
+        
+    # Notificamos a n8n
+    await notify_n8n_error(plano_id=plano_id, nodo=nodo, mensaje=error_msg)
+    
+    return {"status": "error"}
 
 # Construcción del grafo
 workflow = StateGraph(GraphState)

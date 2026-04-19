@@ -17,3 +17,13 @@ class PresupuestoModel(Base):
     lineas_pendientes = Column(JSON, nullable=False)
     status = Column(String, default="pending_review", nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class JobLogModel(Base):
+    __tablename__ = "job_logs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_id = Column(String, nullable=False, index=True)
+    nodo = Column(String, nullable=False)
+    error_type = Column(String, nullable=True)
+    mensaje = Column(String, nullable=False)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
