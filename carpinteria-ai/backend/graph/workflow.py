@@ -24,6 +24,7 @@ class GraphState(TypedDict):
     # Usaremos esto internamente para pasar el presupuesto antes de consolidar
     # Si strict TypedDict is needed, I'll add it.
     presupuesto_calculado: Optional[Dict[str, Any]]
+    motivo_rechazo: Optional[str]
 
 def receive_input(state: GraphState):
     logger.info("Node: receive_input")
@@ -110,12 +111,23 @@ def human_approval(state: GraphState):
     
     logger.info(f"Received human approval response: {approval_response}")
     
-    if isinstance(approval_response, dict) and approval_response.get("approved"):
-        return {"status": "approved"}
-    else:
-        # If rejected or not explicitly approved, set to rejected
-        # Or maybe it's just a status update
-        return {"status": "rejected"}
+    if isinstance(approval_response, dict):
+        action = approval_response.get("action")
+        
+        if action == "approve":
+            updates = {"status": "approved"}
+            ajustes = approval_response.get("ajustes")
+            if ajustes and state.get("presupuesto_consolidado"):
+                presupuesto_actualizado = state["presupuesto_consolidado"].copy()
+                presupuesto_actualizado.update(ajustes)
+                updates["presupuesto_consolidado"] = presupuesto_actualizado
+            return updates
+        elif action == "reject":
+            motivo = approval_response.get("motivo", "No especificado")
+            logger.info(f"Presupuesto rechazado. Motivo: {motivo}")
+            return {"status": "rejected", "motivo_rechazo": motivo}
+            
+    return {"status": "rejected", "motivo_rechazo": "Sin acción definida"}
 
 def send_to_holded(state: GraphState):
     logger.info("Node: send_to_holded")
@@ -123,6 +135,11 @@ def send_to_holded(state: GraphState):
 
 def notify_team(state: GraphState):
     logger.info("Node: notify_team")
+    if state.get("status") == "rejected":
+        motivo = state.get("motivo_rechazo", "Sin motivo")
+        logger.info(f"Notificando al equipo: Presupuesto rechazado. Motivo: {motivo}")
+    else:
+        logger.info("Notificando al equipo: Presupuesto aprobado y procesado exitosamente.")
     return {"status": "completed"}
 
 def handle_error(state: GraphState):
@@ -179,10 +196,17 @@ workflow.add_conditional_edges(
     {"error": "handle_error", "continue": "human_approval"}
 )
 
+def check_approval(state: GraphState):
+    if state.get("status") == "error":
+        return "error"
+    elif state.get("status") == "rejected":
+        return "rejected"
+    return "approved"
+
 workflow.add_conditional_edges(
     "human_approval",
-    check_error,
-    {"error": "handle_error", "continue": "send_to_holded"}
+    check_approval,
+    {"error": "handle_error", "rejected": "notify_team", "approved": "send_to_holded"}
 )
 
 workflow.add_conditional_edges(
