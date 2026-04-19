@@ -178,6 +178,7 @@ async def get_estimate_status(estimate_id: str):
                 "status": current_status,
                 "plano_id": state_values.get("plano_id"),
                 "cliente_id": state_values.get("cliente_id"),
+                "image_url": f"/uploads/{os.path.basename(state_values.get('archivo_path', ''))}" if state_values.get("archivo_path") else None,
                 "plano_analizado": state_values.get("plano_analizado"),
                 "presupuesto_calculado": state_values.get("presupuesto_calculado"),
                 "presupuesto_consolidado": state_values.get("presupuesto_consolidado"),

@@ -3,8 +3,10 @@ Entry point FastAPI
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import logging
+import os
 
 from rag.chroma_client import ChromaClient
 from db.persistence import init_db, get_checkpointer
@@ -40,6 +42,10 @@ async def lifespan(app: FastAPI):
     logger.info("Apagando API...")
 
 app = FastAPI(title="Carpintería AI API", lifespan=lifespan)
+
+# Configurar directorio temporal para subidas
+os.makedirs("/tmp/carpinteria_uploads", exist_ok=True)
+app.mount("/uploads", StaticFiles(directory="/tmp/carpinteria_uploads"), name="uploads")
 
 # Configuración de CORS
 app.add_middleware(
