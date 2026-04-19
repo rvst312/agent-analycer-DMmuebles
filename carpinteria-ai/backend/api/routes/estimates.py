@@ -79,6 +79,70 @@ async def create_estimate(
         "status": "processing"
     }
 
+@router.get("", status_code=status.HTTP_200_OK)
+async def list_estimates():
+    """
+    Devuelve la lista de todos los presupuestos (threads) procesados.
+    """
+    try:
+        async with get_checkpointer() as checkpointer:
+            from graph.workflow import workflow
+            graph_with_cp = workflow.compile(checkpointer=checkpointer)
+            
+            seen_threads = set()
+            estimates = []
+            
+            async for checkpoint_tuple in checkpointer.alist(None):
+                thread_id = checkpoint_tuple.config["configurable"].get("thread_id")
+                if not thread_id or thread_id in seen_threads:
+                    continue
+                
+                seen_threads.add(thread_id)
+                
+                # Opcional: limitar a los últimos 100 para no sobrecargar
+                if len(seen_threads) > 100:
+                    break
+                
+                config = {"configurable": {"thread_id": thread_id}}
+                state_snapshot = await graph_with_cp.aget_state(config)
+                
+                if not state_snapshot or not state_snapshot.values:
+                    continue
+                    
+                state_values = state_snapshot.values
+                next_nodes = state_snapshot.next
+                
+                current_status = state_values.get("status", "unknown")
+                error = state_values.get("error")
+                
+                if next_nodes and "human_approval" in next_nodes:
+                    current_status = "human_approval_required"
+                elif not next_nodes and current_status not in ["error", "rejected", "handled_error"]:
+                    current_status = "completed"
+                elif current_status == "handled_error":
+                    current_status = "error"
+                    
+                # Obtener la fecha del checkpoint
+                updated_at = checkpoint_tuple.checkpoint.get("ts", "")
+                
+                estimates.append({
+                    "estimate_id": thread_id,
+                    "status": current_status,
+                    "plano_id": state_values.get("plano_id"),
+                    "cliente_id": state_values.get("cliente_id"),
+                    "updated_at": updated_at,
+                    "error": error
+                })
+                
+            return {"estimates": estimates}
+            
+    except Exception as e:
+        logger.error(f"Error listando estimates: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno listando presupuestos: {str(e)}"
+        )
+
 @router.get("/{estimate_id}", status_code=status.HTTP_200_OK)
 async def get_estimate_status(estimate_id: str):
     """
