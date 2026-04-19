@@ -13,8 +13,8 @@ from graph.workflow import workflow
 async def test_workflow_human_approval_interrupt(mock_file, mock_analyze_plan, mock_execute_consolidation):
     # Configuramos el checkpointer para habilitar la interrupción
     checkpointer = MemorySaver()
-    app = workflow.compile(checkpointer=checkpointer, interrupt_before=["human_approval"])
-
+    # Ya no necesitamos interrupt_before porque se usa interrupt() internamente
+    app = workflow.compile(checkpointer=checkpointer)
     # Mocking analyze_plan para que no falle
     class MockResult:
         error = None
@@ -48,7 +48,20 @@ async def test_workflow_human_approval_interrupt(mock_file, mock_analyze_plan, m
     async for event in app.astream(initial_state, config=config):
         pass
         
-    # Verificamos que se detuvo antes de human_approval
+    # Verificamos que se detuvo dentro de human_approval
     state = await app.aget_state(config)
     assert state.next == ('human_approval',)
-    assert state.values["status"] == "consolidated"
+    
+    # We also check that there are tasks with an interrupt
+    assert len(state.tasks) == 1
+    assert len(state.tasks[0].interrupts) == 1
+    assert state.tasks[0].interrupts[0].value["message"] == "Waiting for human approval"
+    
+    # Resume the workflow with approval
+    from langgraph.types import Command
+    async for event in app.astream(Command(resume={"approved": True, "notes": "Looks good"}), config=config):
+        pass
+        
+    final_state = await app.aget_state(config)
+    assert not final_state.next
+    assert final_state.values["status"] == "completed"
