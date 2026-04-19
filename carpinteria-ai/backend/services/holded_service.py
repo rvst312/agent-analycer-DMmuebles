@@ -94,3 +94,45 @@ def get_or_create_contacto(nif: str, datos: ContactoSchema) -> Optional[str]:
         datos.nif = nif
         
     return crear_contacto(datos)
+
+def crear_presupuesto(contact_id: str, presupuesto) -> Optional[str]:
+    """
+    Crea un borrador de presupuesto en Holded.
+    Devuelve el ID del documento creado.
+    """
+    import time
+    url = f"{HOLDED_API_URL}/documents/estimate"
+    
+    items = []
+    for linea in presupuesto.lineas:
+        items.append({
+            "name": linea.descripcion,
+            "units": linea.cantidad,
+            "subtotal": linea.subtotal,
+            "tax": 21
+        })
+        
+    payload = {
+        "contactId": contact_id,
+        "date": int(time.time()),
+        "items": items
+    }
+    
+    try:
+        response = requests.post(url, headers=get_headers(), json=payload, timeout=10)
+        response.raise_for_status()
+        
+        result = response.json()
+        if result.get("status") == 1:
+            return result.get("id")
+        else:
+            logger.error(f"Holded devolvió error al crear presupuesto: {result}")
+            return None
+            
+    except requests.exceptions.Timeout:
+        logger.error(f"Timeout al crear presupuesto para contacto {contact_id} en Holded")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error HTTP al crear presupuesto para contacto {contact_id} en Holded: {e}")
+        return None
+

@@ -15,6 +15,7 @@ async def sqlite_checkpointer():
         yield saver
 
 @pytest.mark.anyio
+@patch("graph.workflow.crear_presupuesto")
 @patch("graph.workflow.execute_consolidation", new_callable=AsyncMock)
 @patch("graph.workflow.calculate_pricing")
 @patch("graph.workflow.analyze_plan")
@@ -24,12 +25,14 @@ async def test_workflow_end_to_end(
     mock_analyze_plan,
     mock_calculate_pricing,
     mock_execute_consolidation,
+    mock_crear_presupuesto,
     sqlite_checkpointer
 ):
     # Compilamos el grafo con el checkpointer SQLite
     app = workflow.compile(checkpointer=sqlite_checkpointer)
     
     # 1. Configurar los mocks
+    mock_crear_presupuesto.return_value = "holded_123"
     
     # Mock para vision_agent
     class MockVisionResult:

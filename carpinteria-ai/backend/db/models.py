@@ -16,6 +16,7 @@ class PresupuestoModel(Base):
     lineas = Column(JSON, nullable=False)
     lineas_pendientes = Column(JSON, nullable=False)
     status = Column(String, default="pending_review", nullable=False)
+    holded_estimate_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 class JobLogModel(Base):

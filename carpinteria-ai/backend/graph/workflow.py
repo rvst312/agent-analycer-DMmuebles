@@ -5,11 +5,13 @@ from typing import Any, Dict, Optional, TypedDict
 from agents.consolidation_agent import execute_consolidation
 from agents.pricing_agent import calculate_pricing
 from agents.vision_agent import analyze_plan
-from api.schemas.estimate import PlanoAnalizado, Presupuesto
-from db.models import JobLogModel
+from api.schemas.estimate import (PlanoAnalizado, Presupuesto,
+                                  PresupuestoConsolidado)
+from db.models import JobLogModel, PresupuestoModel
 from db.persistence import get_session
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
+from services.holded_service import crear_presupuesto
 from services.notification_service import notify_n8n_error
 
 logging.basicConfig(level=logging.INFO)
@@ -132,9 +134,44 @@ def human_approval(state: GraphState):
             
     return {"status": "rejected", "motivo_rechazo": "Sin acción definida"}
 
-def send_to_holded(state: GraphState):
+async def send_to_holded(state: GraphState):
     logger.info("Node: send_to_holded")
-    return {"status": "sent_to_holded"}
+    
+    consolidado_dict = state.get("presupuesto_consolidado")
+    if not consolidado_dict:
+        return {"status": "error", "error": "No hay presupuesto consolidado para enviar a Holded"}
+        
+    try:
+        presupuesto = PresupuestoConsolidado(**consolidado_dict)
+        cliente_id = state.get("cliente_id", "unknown")
+        
+        # En una implementación real se debería buscar o crear el contacto en Holded usando sus datos.
+        # Por ahora asumimos que cliente_id es el NIF o un ID válido, o podríamos hacer mock de su ID de contacto
+        # Para cumplir con el issue asumo que ya tenemos el contactId, o usamos el cliente_id.
+        # Para robustez, podemos buscarlo o pasarlo directamente:
+        contact_id = cliente_id
+        
+        holded_id = crear_presupuesto(contact_id, presupuesto)
+        if not holded_id:
+            return {"status": "error", "error": "Falló la creación del presupuesto en Holded"}
+            
+        # Guardar en BD
+        plano_id = state.get("plano_id")
+        if plano_id:
+            async for session in get_session():
+                # Actualizar el presupuesto model
+                from sqlalchemy import select
+                result = await session.execute(select(PresupuestoModel).where(PresupuestoModel.plano_id == plano_id))
+                presupuesto_db = result.scalar_one_or_none()
+                if presupuesto_db:
+                    presupuesto_db.holded_estimate_id = holded_id
+                    await session.commit()
+                break
+                
+        return {"status": "sent_to_holded"}
+    except Exception as e:
+        logger.error(f"Error enviando a Holded: {e}")
+        return {"status": "error", "error": f"Error enviando a Holded: {str(e)}"}
 
 def notify_team(state: GraphState):
     logger.info("Node: notify_team")
