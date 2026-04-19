@@ -6,6 +6,8 @@ import PlanViewer from "@/components/PlanViewer";
 import EstimateBreakdown from "@/components/EstimateBreakdown";
 import { EstimateDetail, LineaPresupuesto } from "@/types/estimate";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 
 export default function EstimatePage() {
   const params = useParams();
@@ -14,7 +16,11 @@ export default function EstimatePage() {
   const [estimate, setEstimate] = useState<EstimateDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
   const [motivoRechazo, setMotivoRechazo] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [lineas, setLineas] = useState<LineaPresupuesto[]>([]);
   const [subtotal, setSubtotal] = useState(0);
@@ -63,6 +69,12 @@ export default function EstimatePage() {
 
   const handleAction = async (action: "approve" | "reject") => {
     try {
+      if (action === "reject" && !motivoRechazo.trim()) {
+        toast.error("Por favor, ingresa un motivo para el rechazo.");
+        return;
+      }
+
+      setIsSubmitting(true);
       const res = await fetch(`http://localhost:8000/workflow/resume`, {
         method: "POST",
         headers: {
@@ -82,13 +94,19 @@ export default function EstimatePage() {
         }),
       });
       if (!res.ok) throw new Error("Error en la acción");
+      
+      setShowApproveModal(false);
+      setShowRejectModal(false);
+      toast.success(action === "approve" ? "Presupuesto aprobado correctamente" : "Presupuesto rechazado correctamente");
       router.push("/dashboard");
     } catch (err: unknown) {
       if (err instanceof Error) {
-        alert(err.message);
+        toast.error(err.message);
       } else {
-        alert("Error en la acción");
+        toast.error("Error en la acción");
       }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -121,23 +139,17 @@ export default function EstimatePage() {
           {estimate.status === "human_approval_required" && (
             <div className="border rounded-lg p-4 bg-white shadow-sm mt-4 flex flex-col gap-4">
               <h3 className="text-lg font-semibold">Acciones</h3>
-              <textarea 
-                className="w-full border rounded p-2 text-sm" 
-                placeholder="Motivo de rechazo (opcional)"
-                value={motivoRechazo}
-                onChange={(e) => setMotivoRechazo(e.target.value)}
-                rows={3}
-              />
+              <p className="text-sm text-gray-600 mb-2">Revisa el presupuesto y toma una decisión para continuar el proceso.</p>
               <div className="flex gap-4">
                 <Button 
-                  onClick={() => handleAction("reject")}
+                  onClick={() => setShowRejectModal(true)}
                   variant="destructive"
                   className="flex-1"
                 >
                   Rechazar
                 </Button>
                 <Button 
-                  onClick={() => handleAction("approve")}
+                  onClick={() => setShowApproveModal(true)}
                   className="flex-1"
                 >
                   Aprobar Presupuesto
@@ -147,6 +159,73 @@ export default function EstimatePage() {
           )}
         </div>
       </div>
+
+      {/* Approve Modal */}
+      {showApproveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <h3 className="text-xl font-semibold mb-4">Aprobar Presupuesto</h3>
+            <p className="text-gray-600 mb-6">
+              ¿Estás seguro de que deseas aprobar este presupuesto? Se enviará al cliente.
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowApproveModal(false)}
+                disabled={isSubmitting}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                onClick={() => handleAction("approve")}
+                disabled={isSubmitting}
+                className="min-w-[120px]"
+              >
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                {isSubmitting ? "Aprobando..." : "Sí, aprobar"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Modal */}
+      {showRejectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <h3 className="text-xl font-semibold mb-4">Rechazar Presupuesto</h3>
+            <p className="text-gray-600 mb-4 text-sm">
+              Ingresa el motivo del rechazo para que el equipo pueda revisarlo.
+            </p>
+            <textarea 
+              className="w-full border border-gray-300 rounded-md p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-6" 
+              placeholder="Motivo de rechazo..."
+              value={motivoRechazo}
+              onChange={(e) => setMotivoRechazo(e.target.value)}
+              rows={4}
+              disabled={isSubmitting}
+            />
+            <div className="flex justify-end gap-3">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowRejectModal(false)}
+                disabled={isSubmitting}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                variant="destructive"
+                onClick={() => handleAction("reject")}
+                disabled={isSubmitting || !motivoRechazo.trim()}
+                className="min-w-[120px]"
+              >
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                {isSubmitting ? "Rechazando..." : "Sí, rechazar"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
