@@ -150,3 +150,66 @@ def test_get_estimate_status_error(mock_compile, mock_cp):
     data = response.json()
     assert data["status"] == "error"
     assert data["error"] == "Fallo el OCR"
+
+class MockCheckpointTuple:
+    def __init__(self, thread_id, status, next_nodes=(), ts="2026-04-19T00:00:00Z"):
+        self.config = {"configurable": {"thread_id": thread_id}}
+        self.checkpoint = {"ts": ts}
+        self.status = status
+        self.next_nodes = next_nodes
+
+class MockCheckpointerWithList(MockCheckpointerContext):
+    def __init__(self, tuples):
+        self.tuples = tuples
+        self.mock_cp = AsyncMock()
+        
+        async def mock_alist(*args, **kwargs):
+            for t in self.tuples:
+                yield t
+        
+        self.mock_cp.alist = mock_alist
+        
+    async def __aenter__(self):
+        return self.mock_cp
+
+@patch("api.routes.estimates.get_checkpointer")
+@patch("graph.workflow.workflow.compile")
+def test_list_estimates(mock_compile, mock_get_cp):
+    # Crear datos simulados
+    t1 = MockCheckpointTuple("t1", "processing", ("some_node",))
+    t2 = MockCheckpointTuple("t2", "consolidated", ("human_approval",))
+    
+    mock_cp_instance = MockCheckpointerWithList([t1, t2])
+    mock_get_cp.return_value = mock_cp_instance
+    
+    mock_graph = AsyncMock()
+    
+    # Simulamos el aget_state para que devuelva el estado correspondiente
+    async def mock_aget_state(config):
+        thread_id = config["configurable"]["thread_id"]
+        if thread_id == "t1":
+            return MockStateSnapshot(values={"status": "processing", "cliente_id": "c1"}, next_nodes=("some_node",))
+        elif thread_id == "t2":
+            return MockStateSnapshot(values={"status": "consolidated", "plano_id": "p2"}, next_nodes=("human_approval",))
+        return None
+        
+    mock_graph.aget_state = mock_aget_state
+    mock_compile.return_value = mock_graph
+
+    response = client.get("/estimates")
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert "estimates" in data
+    estimates = data["estimates"]
+    assert len(estimates) == 2
+    
+    # Validar el primer estimate
+    e1 = next(e for e in estimates if e["estimate_id"] == "t1")
+    assert e1["status"] == "processing"
+    assert e1["cliente_id"] == "c1"
+    
+    # Validar el segundo estimate
+    e2 = next(e for e in estimates if e["estimate_id"] == "t2")
+    assert e2["status"] == "human_approval_required"
+    assert e2["plano_id"] == "p2"
