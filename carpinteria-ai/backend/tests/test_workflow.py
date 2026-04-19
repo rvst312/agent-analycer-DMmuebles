@@ -2,9 +2,50 @@
 Tests for workflow
 """
 import pytest
-from unittest.mock import patch, mock_open, AsyncMock
+from unittest.mock import patch, mock_open, AsyncMock, MagicMock
 from langgraph.checkpoint.memory import MemorySaver
-from graph.workflow import workflow
+from graph.workflow import workflow, handle_error
+
+@pytest.mark.anyio
+@patch("graph.workflow.get_session")
+@patch("graph.workflow.notify_n8n_error")
+async def test_handle_error_node(mock_notify_n8n, mock_get_session):
+    # Mocking db session
+    mock_session = AsyncMock()
+    mock_session.add = MagicMock()
+    
+    async def mock_session_generator():
+        yield mock_session
+        
+    mock_get_session.return_value = mock_session_generator()
+    
+    state = {
+        "plano_id": "test_plano_123",
+        "thread_id": "test_job_123",
+        "status": "error",
+        "error": "Failed in pricing: error_detail"
+    }
+    
+    result = await handle_error(state)
+    
+    assert result["status"] == "error"
+    
+    # Check that job log was added
+    mock_session.add.assert_called_once()
+    added_log = mock_session.add.call_args[0][0]
+    assert added_log.job_id == "test_job_123"
+    assert added_log.nodo == "rag_pricing"
+    assert added_log.mensaje == "Failed in pricing: error_detail"
+    assert added_log.error_type == "workflow_error"
+    
+    mock_session.commit.assert_awaited_once()
+    
+    # Check that N8N was notified
+    mock_notify_n8n.assert_awaited_once_with(
+        plano_id="test_plano_123",
+        nodo="rag_pricing",
+        mensaje="Failed in pricing: error_detail"
+    )
 
 @pytest.mark.anyio
 @patch("graph.workflow.execute_consolidation", new_callable=AsyncMock)

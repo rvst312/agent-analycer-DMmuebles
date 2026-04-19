@@ -34,6 +34,14 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Tablas de SQLAlchemy creadas/verificadas.")
 
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    """Generador de sesiones asíncronas para FastAPI."""
+    async with async_session_maker() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
+
 # --- Configuración del Checkpointer de LangGraph ---
 @asynccontextmanager
 async def get_checkpointer() -> AsyncGenerator:
