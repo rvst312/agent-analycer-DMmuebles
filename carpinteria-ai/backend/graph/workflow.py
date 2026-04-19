@@ -7,6 +7,7 @@ from agents.pricing_agent import calculate_pricing
 from agents.vision_agent import analyze_plan
 from api.schemas.estimate import PlanoAnalizado, Presupuesto
 from langgraph.graph import END, StateGraph
+from langgraph.types import interrupt
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -97,7 +98,24 @@ async def consolidate(state: GraphState):
 
 def human_approval(state: GraphState):
     logger.info("Node: human_approval (HITL)")
-    return {"status": "pending_approval"}
+    
+    thread_id = state.get("thread_id") or state.get("cliente_id")
+    
+    # Pause the workflow here and wait for human input
+    approval_response = interrupt({
+        "message": "Waiting for human approval",
+        "thread_id": thread_id,
+        "presupuesto_consolidado": state.get("presupuesto_consolidado")
+    })
+    
+    logger.info(f"Received human approval response: {approval_response}")
+    
+    if isinstance(approval_response, dict) and approval_response.get("approved"):
+        return {"status": "approved"}
+    else:
+        # If rejected or not explicitly approved, set to rejected
+        # Or maybe it's just a status update
+        return {"status": "rejected"}
 
 def send_to_holded(state: GraphState):
     logger.info("Node: send_to_holded")
