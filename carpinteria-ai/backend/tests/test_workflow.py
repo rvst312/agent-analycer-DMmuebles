@@ -48,10 +48,14 @@ async def test_handle_error_node(mock_notify_n8n, mock_get_session):
     )
 
 @pytest.mark.anyio
+@patch("graph.workflow.crear_presupuesto")
 @patch("graph.workflow.execute_consolidation", new_callable=AsyncMock)
 @patch("graph.workflow.analyze_plan")
 @patch("builtins.open", new_callable=mock_open, read_data=b"dummy")
-async def test_workflow_human_approval_interrupt(mock_file, mock_analyze_plan, mock_execute_consolidation):
+async def test_workflow_human_approval_interrupt(mock_file, mock_analyze_plan, mock_execute_consolidation, mock_crear_presupuesto):
+    # Mocking crear_presupuesto
+    mock_crear_presupuesto.return_value = "holded_123"
+    
     # Configuramos el checkpointer para habilitar la interrupción
     checkpointer = MemorySaver()
     # Ya no necesitamos interrupt_before porque se usa interrupt() internamente
