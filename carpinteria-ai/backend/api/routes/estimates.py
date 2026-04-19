@@ -1,12 +1,13 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, status
-import uuid
+import logging
 import os
 import shutil
-import logging
+import uuid
 from typing import Optional
 
-from graph.workflow import app_workflow
 from db.persistence import get_checkpointer
+from fastapi import (APIRouter, BackgroundTasks, File, Form, HTTPException,
+                     UploadFile, status)
+from graph.workflow import app_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -77,3 +78,58 @@ async def create_estimate(
         "estimate_id": estimate_id,
         "status": "processing"
     }
+
+@router.get("/{estimate_id}", status_code=status.HTTP_200_OK)
+async def get_estimate_status(estimate_id: str):
+    """
+    Consulta el estado de un presupuesto por su ID (thread_id).
+    """
+    try:
+        async with get_checkpointer() as checkpointer:
+            from graph.workflow import workflow
+            graph_with_cp = workflow.compile(checkpointer=checkpointer)
+            
+            config = {"configurable": {"thread_id": estimate_id}}
+            state_snapshot = await graph_with_cp.aget_state(config)
+            
+            if not state_snapshot or not state_snapshot.values:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Estimate {estimate_id} no encontrado."
+                )
+                
+            state_values = state_snapshot.values
+            next_nodes = state_snapshot.next
+            
+            current_status = state_values.get("status", "unknown")
+            error = state_values.get("error")
+            
+            if next_nodes and "human_approval" in next_nodes:
+                current_status = "human_approval_required"
+            elif not next_nodes and current_status not in ["error", "rejected"]:
+                current_status = "completed"
+                
+            response = {
+                "estimate_id": estimate_id,
+                "status": current_status,
+                "plano_id": state_values.get("plano_id"),
+                "cliente_id": state_values.get("cliente_id"),
+                "plano_analizado": state_values.get("plano_analizado"),
+                "presupuesto_calculado": state_values.get("presupuesto_calculado"),
+                "presupuesto_consolidado": state_values.get("presupuesto_consolidado"),
+                "motivo_rechazo": state_values.get("motivo_rechazo")
+            }
+            
+            if error:
+                response["error"] = error
+                
+            return response
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error consultando estimate_id {estimate_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno consultando el estado: {str(e)}"
+        )
