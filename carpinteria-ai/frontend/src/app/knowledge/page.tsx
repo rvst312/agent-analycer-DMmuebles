@@ -79,9 +79,9 @@ export default function KnowledgePage() {
       // Recargar datos
       setSkip(0);
       await fetchPrecios(0);
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      toast.error(err.response?.data?.detail || 'Error al importar el archivo CSV');
+      toast.error((err as Error & { response?: { data?: { detail?: string } } }).response?.data?.detail || 'Error al importar el archivo CSV');
     } finally {
       setIsImporting(false);
       if (fileInputRef.current) {
