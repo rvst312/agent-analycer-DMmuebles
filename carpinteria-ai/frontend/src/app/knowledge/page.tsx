@@ -8,6 +8,18 @@ import { toast } from 'sonner';
 import { Upload, Loader2, Search, Filter } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
+type ApiError = { response?: { data?: { detail?: unknown } } };
+
+function extractErrorMessage(err: unknown, fallback: string): string {
+  const detail = (err as ApiError).response?.data?.detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d: { msg?: string }) => d.msg ?? JSON.stringify(d)).join('; ');
+  }
+  if (typeof detail === 'string') return detail;
+  if (err instanceof Error) return err.message;
+  return fallback;
+}
+
 export default function KnowledgePage() {
   const [precios, setPrecios] = useState<PrecioResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,7 +47,7 @@ export default function KnowledgePage() {
       }
     } catch (err) {
       console.error(err);
-      toast.error('Error al cargar la base de precios');
+      toast.error(extractErrorMessage(err, 'Error al cargar la base de precios'));
     } finally {
       setLoading(false);
     }
@@ -56,8 +68,8 @@ export default function KnowledgePage() {
       ));
     } catch (err) {
       console.error(err);
-      toast.error('Error al actualizar el precio');
-      throw err; // Para que el componente PriceTable sepa que falló
+      toast.error(extractErrorMessage(err, 'Error al actualizar el precio'));
+      throw err;
     }
   };
 
@@ -81,7 +93,7 @@ export default function KnowledgePage() {
       await fetchPrecios(0);
     } catch (err) {
       console.error(err);
-      toast.error((err as Error & { response?: { data?: { detail?: string } } }).response?.data?.detail || 'Error al importar el archivo CSV');
+      toast.error(extractErrorMessage(err, 'Error al importar el archivo CSV'));
     } finally {
       setIsImporting(false);
       if (fileInputRef.current) {

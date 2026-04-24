@@ -15,14 +15,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workflow", tags=["Workflow"])
 
 @router.post("/token", status_code=status.HTTP_200_OK, tags=["Auth"])
-async def get_dev_token():
+async def get_dev_token(role: str = "jefe_obra"):
     """
-    Emite un JWT de desarrollo con rol jefe_obra. Solo para uso en desarrollo.
+    Emite un JWT de desarrollo. Solo para uso en desarrollo.
+    Roles válidos: jefe_obra, admin.
     En producción, reemplazar por un flujo de autenticación real.
     """
+    allowed_roles = {"jefe_obra", "admin"}
+    if role not in allowed_roles:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Rol no válido. Usar: {allowed_roles}"
+        )
     payload = {
         "sub": "dev_user",
-        "role": "jefe_obra",
+        "role": role,
         "exp": datetime.now(timezone.utc) + timedelta(hours=24),
     }
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)

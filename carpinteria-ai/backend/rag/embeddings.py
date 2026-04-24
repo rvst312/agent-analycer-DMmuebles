@@ -1,13 +1,20 @@
+import os
 import uuid
 from typing import List, Dict, Any, Optional
 from chromadb.utils import embedding_functions
 import chromadb
 
-# Initialize the ChromaDB client
-chroma_client = chromadb.PersistentClient(path="./chroma_data")
-# Default embedding function
+# Use HTTP client when CHROMA_HOST/CHROMA_PORT are set (Docker), otherwise local PersistentClient
+_chroma_host = os.environ.get("CHROMA_HOST")
+_chroma_port = os.environ.get("CHROMA_PORT")
+if _chroma_host and _chroma_port:
+    chroma_client = chromadb.HttpClient(host=_chroma_host, port=int(_chroma_port))
+else:
+    chroma_client = chromadb.PersistentClient(
+        path=os.environ.get("CHROMA_PERSIST_PATH", "./chroma_data")
+    )
+
 emb_fn = embedding_functions.DefaultEmbeddingFunction()
-# Get or create the collection for prices
 precios_collection = chroma_client.get_or_create_collection(
     name="precios",
     embedding_function=emb_fn
