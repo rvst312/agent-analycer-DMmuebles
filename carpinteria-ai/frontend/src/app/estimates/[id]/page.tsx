@@ -28,33 +28,38 @@ export default function EstimatePage() {
   const [total, setTotal] = useState(0);
 
   useEffect(() => {
+    const TERMINAL_STATUSES = new Set(["human_approval_required", "completed", "rejected", "error"]);
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
     const fetchEstimate = async () => {
       try {
-        setLoading(true);
-        const res = await fetch(`http://localhost:8000/estimates/${estimateId}`);
-        if (!res.ok) {
-          throw new Error("No se pudo cargar el presupuesto");
-        }
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const res = await fetch(`${baseUrl}/estimates/${estimateId}`);
+        if (!res.ok) throw new Error("No se pudo cargar el presupuesto");
         const data: EstimateDetail = await res.json();
         setEstimate(data);
+        setLoading(false);
         if (data.presupuesto_consolidado) {
           setLineas(data.presupuesto_consolidado.lineas || []);
           setSubtotal(data.presupuesto_consolidado.subtotal || 0);
           setIva(data.presupuesto_consolidado.iva || 0);
           setTotal(data.presupuesto_consolidado.total || 0);
         }
-      } catch (err: unknown) {
-        if (err instanceof Error) {
-          setError(err.message);
-        } else {
-          setError("Error desconocido");
+        if (TERMINAL_STATUSES.has(data.status) && intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
         }
-      } finally {
+      } catch (err: unknown) {
         setLoading(false);
+        if (err instanceof Error) setError(err.message);
+        else setError("Error desconocido");
+        if (intervalId) clearInterval(intervalId);
       }
     };
 
     fetchEstimate();
+    intervalId = setInterval(fetchEstimate, 5000);
+    return () => { if (intervalId) clearInterval(intervalId); };
   }, [estimateId]);
 
   const handleLineasChange = (newLineas: LineaPresupuesto[]) => {
@@ -75,11 +80,18 @@ export default function EstimatePage() {
       }
 
       setIsSubmitting(true);
-      const res = await fetch(`http://localhost:8000/workflow/resume`, {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+      // Obtener token de desarrollo
+      const tokenRes = await fetch(`${baseUrl}/workflow/token`, { method: "POST" });
+      if (!tokenRes.ok) throw new Error("No se pudo obtener el token de autorización");
+      const { access_token } = await tokenRes.json();
+
+      const res = await fetch(`${baseUrl}/workflow/resume`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": "Bearer fake_token_for_now" // Si verify_jefe_obra_token lo requiere
+          "Authorization": `Bearer ${access_token}`
         },
         body: JSON.stringify({
           thread_id: estimateId,
@@ -110,22 +122,37 @@ export default function EstimatePage() {
     }
   };
 
-  if (loading) return <div className="p-8">Cargando...</div>;
+  if (loading) return (
+    <div className="p-8 flex flex-col items-center justify-center min-h-[40vh] gap-4">
+      <Loader2 className="h-10 w-10 animate-spin text-primary" />
+      <p className="text-gray-500">Analizando el plano y calculando presupuesto...</p>
+    </div>
+  );
   if (error) return <div className="p-8 text-red-500">Error: {error}</div>;
   if (!estimate) return <div className="p-8">No encontrado</div>;
+
+  const TERMINAL_STATUSES = new Set(["human_approval_required", "completed", "rejected", "error"]);
+  const isProcessing = estimate && !TERMINAL_STATUSES.has(estimate.status);
 
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold">Revisión de Presupuesto #{estimateId.substring(0,8)}</h1>
-        <span className="px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
+        <span className="px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 flex items-center gap-2">
+          {isProcessing && <Loader2 className="h-3 w-3 animate-spin" />}
           {estimate.status}
         </span>
       </div>
+      {isProcessing && (
+        <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-3 text-yellow-800">
+          <Loader2 className="h-5 w-5 animate-spin flex-shrink-0" />
+          <span>Analizando el plano y calculando presupuesto. Esta página se actualizará automáticamente.</span>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="flex flex-col gap-4">
-          <PlanViewer imageUrl={estimate.image_url ? `http://localhost:8000${estimate.image_url}` : undefined} />
+          <PlanViewer imageUrl={estimate.image_url ? `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${estimate.image_url}` : undefined} />
         </div>
         <div className="flex flex-col gap-4">
           <EstimateBreakdown 

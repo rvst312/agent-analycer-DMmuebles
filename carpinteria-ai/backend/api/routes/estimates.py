@@ -7,7 +7,6 @@ from typing import Optional
 from db.persistence import get_checkpointer
 from fastapi import (APIRouter, BackgroundTasks, File, Form, HTTPException,
                      UploadFile, status)
-from graph.workflow import app_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ UPLOAD_DIR = "/tmp/carpinteria_uploads"
 # Asegurar que el directorio temporal exista
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-async def process_estimate(estimate_id: str, file_path: str, cliente_id: str):
+async def process_estimate(estimate_id: str, file_path: str, cliente_id: str, content_type: str):
     """
     Función que ejecuta el grafo en background.
     """
@@ -39,7 +38,8 @@ async def process_estimate(estimate_id: str, file_path: str, cliente_id: str):
                 "archivo_path": file_path,
                 "cliente_id": cliente_id,
                 "status": "pending",
-                "thread_id": estimate_id
+                "thread_id": estimate_id,
+                "content_type": content_type
             }
             
             await graph_with_cp.ainvoke(initial_state, config=config)
@@ -72,7 +72,7 @@ async def create_estimate(
         logger.error(f"Error guardando el archivo: {e}")
         raise HTTPException(status_code=500, detail="Error al guardar el archivo subido.")
     
-    background_tasks.add_task(process_estimate, estimate_id, file_path, cliente_id)
+    background_tasks.add_task(process_estimate, estimate_id, file_path, cliente_id, file.content_type)
     
     return {
         "estimate_id": estimate_id,

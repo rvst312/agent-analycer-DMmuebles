@@ -1,7 +1,10 @@
 import logging
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Literal, Optional
 
-from api.auth import verify_jefe_obra_token
+import jwt
+from api.auth import JWT_ALGORITHM, JWT_SECRET, verify_jefe_obra_token
 from db.persistence import get_checkpointer
 from fastapi import APIRouter, Depends, HTTPException, status
 from langgraph.types import Command
@@ -9,7 +12,21 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Workflow"])
+router = APIRouter(prefix="/workflow", tags=["Workflow"])
+
+@router.post("/token", status_code=status.HTTP_200_OK, tags=["Auth"])
+async def get_dev_token():
+    """
+    Emite un JWT de desarrollo con rol jefe_obra. Solo para uso en desarrollo.
+    En producción, reemplazar por un flujo de autenticación real.
+    """
+    payload = {
+        "sub": "dev_user",
+        "role": "jefe_obra",
+        "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return {"access_token": token, "token_type": "bearer"}
 
 class ResumeRequest(BaseModel):
     thread_id: str

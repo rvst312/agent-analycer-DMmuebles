@@ -1,8 +1,8 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { toast } from "sonner";
-import { useRouter } from "next/navigation";
 
 interface Estimate {
   estimate_id: string;
@@ -17,7 +17,8 @@ export function Notifications() {
   useEffect(() => {
     const fetchEstimates = async () => {
       try {
-        const res = await fetch("http://localhost:8000/estimates");
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const res = await fetch(`${baseUrl}/estimates`);
         if (res.ok) {
           const data = await res.json();
           const estimates: Estimate[] = data.estimates || [];

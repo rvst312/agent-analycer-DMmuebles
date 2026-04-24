@@ -1,5 +1,7 @@
 import base64
 import logging
+# Explicitly allow serialization of Enums used in state
+import os
 from typing import Any, Dict, Optional, TypedDict
 
 from agents.consolidation_agent import execute_consolidation
@@ -13,6 +15,8 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 from services.holded_service import crear_presupuesto
 from services.notification_service import notify_n8n_error
+
+os.environ["LANGGRAPH_ALLOW_MODULES"] = "api.schemas.estimate"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,6 +34,7 @@ class GraphState(TypedDict):
     # Si strict TypedDict is needed, I'll add it.
     presupuesto_calculado: Optional[Dict[str, Any]]
     motivo_rechazo: Optional[str]
+    content_type: Optional[str]
 
 def receive_input(state: GraphState):
     logger.info("Node: receive_input")
@@ -45,12 +50,21 @@ def vision_analysis(state: GraphState):
     try:
         with open(file_path, "rb") as f:
             image_base64 = base64.b64encode(f.read()).decode("utf-8")
+            
+        # Obtener el media_type del estado o usar fallback
+        media_type = state.get("content_type")
+        if not media_type:
+            media_type = "image/jpeg" # fallback default
+            if file_path.lower().endswith(".png"):
+                media_type = "image/png"
+            elif file_path.lower().endswith(".pdf"):
+                media_type = "application/pdf"
     except Exception as e:
         return {"status": "error", "error": f"Failed to read image file: {str(e)}"}
         
     plano_id = state.get("cliente_id", "unknown")
     
-    result = analyze_plan(image_base64=image_base64, plano_id=plano_id)
+    result = analyze_plan(image_base64=image_base64, media_type=media_type, plano_id=plano_id)
     
     if result.error:
         return {"status": "error", "error": result.error, "plano_analizado": result.model_dump()}

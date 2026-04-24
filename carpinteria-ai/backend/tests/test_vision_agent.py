@@ -52,7 +52,7 @@ También tiene dos cajones.
     mock_client.messages.create.assert_called_once()
     call_kwargs = mock_client.messages.create.call_args.kwargs
     assert call_kwargs["model"] == "claude-3-5-sonnet-20241022"
-    assert call_kwargs["max_tokens"] == 4096
+    assert call_kwargs["max_tokens"] == 8192
     assert call_kwargs["system"].startswith("Eres un experto analista")
     
     user_message = call_kwargs["messages"][0]["content"]

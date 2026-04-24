@@ -8,15 +8,19 @@ class TipoComponente(str, Enum):
     TABLERO = "tablero"
     PUERTA = "puerta"
     CAJON = "cajon"
+    CAJON_TILDE = "cajón"
     HERRAJE = "herraje"
     BARRA = "barra"
+    ESTANTE = "estante"
+    ARMARIO = "armario"
+    OTRO = "otro"
 
 class ComponenteArmario(BaseModel):
     tipo: TipoComponente
     material: str
     acabado: str
-    ancho_cm: float = Field(..., gt=0)
-    largo_cm: float = Field(..., gt=0)
+    ancho_cm: float = Field(..., ge=0)
+    largo_cm: float = Field(..., ge=0)
     cantidad: int = Field(..., gt=0)
     notas: Optional[str] = None
 

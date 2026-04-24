@@ -10,6 +10,35 @@ from api.schemas.estimate import (ComponenteArmario, PlanoAnalizado,
 
 logger = logging.getLogger(__name__)
 
+def _repair_truncated_json(json_content: str, plano_id: str, original_error: Exception) -> dict:
+    """
+    Attempts to recover a truncated JSON by finding the last complete component object.
+    Iterates backwards through `}` positions and tries closing the array at each one.
+    """
+    closers = [
+        '], "confidence_score": 0.5}',
+        '}], "confidence_score": 0.5}',
+    ]
+    for i in range(len(json_content) - 1, -1, -1):
+        if json_content[i] != '}':
+            continue
+        candidate_base = json_content[:i + 1]
+        for closer in closers:
+            try:
+                result = json.loads(candidate_base + closer)
+                logger.warning(f"JSON truncado reparado para plano {plano_id} (recuperados hasta char {i})")
+                return result
+            except json.JSONDecodeError:
+                continue
+
+    _log_error(plano_id, "JSONDecodeError", original_error, raw_text=json_content)
+    return {
+        "plano_id": plano_id,
+        "componentes": [],
+        "confidence_score": 0.0,
+        "error": f"JSON parse error: {str(original_error)}"
+    }
+
 def _log_error(plano_id: str, error_type: str, details: Any, raw_text: Optional[str] = None):
     log_data = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -49,37 +78,37 @@ def analyze_plan(image_base64: str, media_type: str = "image/jpeg", notes: Optio
     prompt_content = f"""
 <instructions>
 Analiza la imagen proporcionada paso a paso. Primero, utiliza un bloque <raw_reasoning> para razonar sobre lo que ves en el plano: dimensiones, materiales, tipos de componentes y acabados.
+MANTÉN EL RAZONAMIENTO MUY BREVE Y CONCISO (máximo 50 palabras).
 Después de tu razonamiento, proporciona estrictamente un bloque JSON dentro de <output_format> con la siguiente estructura:
 {{
   "plano_id": "generado_o_extraido",
   "componentes": [
     {{
-      "tipo": "tablero|puerta|cajon|herraje|barra",
-      "material": "string",
-      "acabado": "string",
-      "ancho_cm": float,
-      "largo_cm": float,
-      "cantidad": int,
-      "notas": "string"
+      "tipo": "tablero|puerta|cajon|herraje|barra|estante|armario|otro",
+      "material": "string (máx. 4 palabras)",
+      "acabado": "string (máx. 4 palabras)",
+      "ancho_cm": 0.0,
+      "largo_cm": 0.0,
+      "cantidad": 1,
+      "notas": "string (máx. 10 palabras)"
     }}
   ],
-  "confidence_score": float (0.0 a 1.0)
+  "confidence_score": 0.9
 }}
+MUY IMPORTANTE REGLA JSON: Para "ancho_cm", "largo_cm" y "cantidad" debes devolver SIEMPRE un número (ej. 120.5 o 1). ¡NUNCA devuelvas texto sin comillas como la palabra 'variable' porque rompes el JSON! Si no conoces la medida exacta o la cantidad, usa obligatoriamente el número 0.0 o 1.
+CRÍTICO: Los campos "material", "acabado" y "notas" deben ser MUY CORTOS (ver límites arriba). Respuestas largas causan truncamiento del JSON y fallo total del análisis.
 No incluyas texto fuera del bloque <raw_reasoning> y el JSON en <output_format>.
 </instructions>
 
 <input_data>
 Notas adicionales del cliente: {notes if notes else "Ninguna"}
 </input_data>
-
-<output_format>
-</output_format>
 """
 
     try:
         response = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=4096,
+            model="claude-sonnet-4-6",
+            max_tokens=8192,
             system=SYSTEM_PROMPT,
             messages=[
                 {
@@ -133,20 +162,19 @@ Notas adicionales del cliente: {notes if notes else "Ninguna"}
         try:
             result = json.loads(json_content)
         except json.JSONDecodeError as e:
-            _log_error(plano_id, "JSONDecodeError", e, raw_text=json_content)
-            result = {
-                "plano_id": plano_id,
-                "componentes": [],
-                "confidence_score": 0.0,
-                "error": f"JSON parse error: {str(e)}"
-            }
+            # Intentar reparar un JSON truncado buscando el último objeto completo
+            result = _repair_truncated_json(json_content, plano_id, e)
         
         # Guardar el razonamiento bruto para auditoría en el grafo
         result["raw_reasoning"] = raw_reasoning
         
         # Validar con Pydantic
         try:
-            return PlanoAnalizado(**result)
+            # Convertimos el resultado a diccionario puro para evitar problemas
+            # de serialización de Enums (TipoComponente) en LangGraph
+            model = PlanoAnalizado(**result)
+            # Volvemos a parsear desde json para que los Enums se conviertan a str
+            return PlanoAnalizado(**json.loads(model.model_dump_json()))
         except Exception as e:
             _log_error(plano_id, "PydanticValidationError", e)
             return PlanoAnalizado(

@@ -1,14 +1,13 @@
 "use client";
 
-import React, { useState, useRef } from "react";
-import { useRouter } from "next/navigation";
-import { Upload, File as FileIcon, X, Loader2, Image as ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { File as FileIcon, Image as ImageIcon, Loader2, Upload, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import React, { useRef, useState } from "react";
 import { toast } from "sonner";
-import apiClient from "@/lib/api";
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "application/pdf"];
@@ -110,19 +109,26 @@ export default function UploadForm() {
       formData.append("file", file);
       formData.append("cliente_id", clientId);
 
-      const response = await apiClient.post("/estimates", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
+      // Usar fetch estándar directamente en lugar de apiClient
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${baseUrl}/estimates`, {
+        method: "POST",
+        body: formData,
+        // ¡NO establecer Content-Type aquí! El navegador lo hace automáticamente con el boundary para multipart/form-data
       });
 
-      if (response.status === 202 || response.status === 200) {
+      if (response.ok || response.status === 202) {
+        const data = await response.json();
         toast.success("Plano subido con éxito. Procesando presupuesto...");
-        router.push("/dashboard");
+        router.push(`/estimates/${data.estimate_id}`);
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("Server error:", errorData);
+        toast.error(`Error del servidor: ${response.status}`);
       }
     } catch (error) {
       console.error("Upload error:", error);
-      toast.error("Error al subir el plano. Inténtalo de nuevo.");
+      toast.error("Error de conexión al subir el plano.");
     } finally {
       setIsUploading(false);
     }

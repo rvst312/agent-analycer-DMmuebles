@@ -1,15 +1,15 @@
 """
 Entry point FastAPI
 """
+import logging
+import os
+from contextlib import asynccontextmanager
+
+from db.persistence import close_checkpointer_pool, get_checkpointer, init_db
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
-import logging
-import os
-
 from rag.chroma_client import ChromaClient
-from db.persistence import init_db, get_checkpointer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,8 +24,9 @@ async def lifespan(app: FastAPI):
 
     # Configurar tablas de Checkpointer de LangGraph
     try:
-        async with get_checkpointer() as _:
-            logger.info("Tablas de Checkpointer LangGraph verificadas/creadas.")
+        # Esto inicializará y abrirá el pool global en el startup
+        async with get_checkpointer() as checkpointer:
+            logger.info("Tablas de Checkpointer LangGraph verificadas/creadas y pool inicializado.")
     except Exception as e:
         logger.error(f"Error al inicializar el Checkpointer: {e}")
 
@@ -40,6 +41,10 @@ async def lifespan(app: FastAPI):
     yield
     # Limpieza al apagar (si es necesaria)
     logger.info("Apagando API...")
+    try:
+        await close_checkpointer_pool()
+    except Exception as e:
+        logger.error(f"Error al cerrar pool de checkpointer: {e}")
 
 app = FastAPI(title="Carpintería AI API", lifespan=lifespan)
 
@@ -59,6 +64,7 @@ app.add_middleware(
 from api.routes.estimates import router as estimates_router
 from api.routes.knowledge import router as knowledge_router
 from api.routes.workflow import router as workflow_router
+
 
 @app.get("/")
 def read_root():

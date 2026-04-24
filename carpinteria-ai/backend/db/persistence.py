@@ -1,14 +1,14 @@
-import os
 import logging
-from typing import AsyncGenerator
+import os
 from contextlib import asynccontextmanager
-
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import declarative_base
+from typing import AsyncGenerator, Optional
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from psycopg_pool import AsyncConnectionPool
+from sqlalchemy.ext.asyncio import (AsyncSession, async_sessionmaker,
+                                    create_async_engine)
+from sqlalchemy.orm import declarative_base
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,9 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 # --- Configuración del Checkpointer de LangGraph ---
+# Pool global para evitar crear demasiadas conexiones a PostgreSQL
+_pg_pool: Optional[AsyncConnectionPool] = None
+
 @asynccontextmanager
 async def get_checkpointer() -> AsyncGenerator:
     """
@@ -51,20 +54,34 @@ async def get_checkpointer() -> AsyncGenerator:
     De lo contrario, usa AsyncSqliteSaver para desarrollo local.
     Crea las tablas automáticamente al arrancar (setup).
     """
+    global _pg_pool
+    
     if POSTGRES_URL:
-        logger.info("Usando AsyncPostgresSaver para el checkpointer.")
-        async with AsyncConnectionPool(
-            conninfo=POSTGRES_URL,
-            max_size=20,
-            kwargs={"autocommit": True, "prepare_threshold": 0},
-        ) as pool:
-            checkpointer = AsyncPostgresSaver(pool)
-            logger.info("Configurando tablas para AsyncPostgresSaver...")
-            await checkpointer.setup()
-            yield checkpointer
+        if _pg_pool is None:
+            logger.info("Creando AsyncConnectionPool global para el checkpointer.")
+            _pg_pool = AsyncConnectionPool(
+                conninfo=POSTGRES_URL,
+                min_size=1,
+                max_size=20,
+                kwargs={"autocommit": True, "prepare_threshold": 0},
+            )
+            # Abrir el pool explícitamente para que esté listo
+            await _pg_pool.open()
+            
+        checkpointer = AsyncPostgresSaver(_pg_pool)
+        # Opcional: setup() solo es necesario una vez al inicio, pero es idempotente
+        await checkpointer.setup()
+        yield checkpointer
     else:
         logger.info("Usando AsyncSqliteSaver para el checkpointer local.")
         async with AsyncSqliteSaver.from_conn_string("checkpoints.sqlite") as checkpointer:
-            logger.info("Configurando tablas para AsyncSqliteSaver...")
             await checkpointer.setup()
             yield checkpointer
+
+async def close_checkpointer_pool():
+    """Cierra el pool global de conexiones de PostgreSQL al apagar la aplicación."""
+    global _pg_pool
+    if _pg_pool is not None:
+        await _pg_pool.close()
+        _pg_pool = None
+        logger.info("Pool global de AsyncConnectionPool cerrado.")
