@@ -35,29 +35,34 @@ def calculate_pricing(plano: PlanoAnalizado, cliente_id: str, on_line_added=None
         query_text = f"{comp.material} {comp.acabado} {comp.tipo}"
         
         # 3. Consultar RAG
-        version_vigente = os.environ.get("PRECIOS_VERSION", "1.0")
-        resultados = query_precios(query_text, cliente_id, version=version_vigente, n_results=1)
-        
+        # Try the specific client first, then fall back to the shared "general" catalogue.
+        # No version filter — version mismatch ("1" vs "1.0") would silently return nothing.
+        resultados = []
+        for client_key in dict.fromkeys([cliente_id, "general"]):  # dedup, preserve order
+            resultados = query_precios(query_text, client_key, n_results=1)
+            if resultados:
+                if client_key != cliente_id:
+                    logger.info(f"Precio encontrado en catálogo 'general' para '{query_text}'")
+                break
+
         precio_unitario = 0.0
         precio_pendiente = True
-        
+
         if resultados:
-            # Tomamos el primer resultado
             mejor_resultado = resultados[0]
             distancia = mejor_resultado.get("distancia", 0.0)
-            
-            # En ChromaDB L2 distance, valores más bajos son mejores.
-            # Solo consideramos válido si la distancia es menor a un umbral (ej. 1.0)
-            if distancia < 1.0:
+            # L2 distance: lower = better. Threshold 1.5 keeps reasonable matches.
+            if distancia < 1.5:
                 metadatos = mejor_resultado.get("metadatos", {})
                 if "precio_unitario" in metadatos:
                     try:
                         precio_unitario = float(metadatos["precio_unitario"])
                         precio_pendiente = False
+                        logger.info(f"Precio asignado para '{query_text}': {precio_unitario} (dist={distancia:.3f})")
                     except (ValueError, TypeError):
                         logger.error(f"precio_unitario inválido en RAG para {query_text}: {metadatos.get('precio_unitario')}")
             else:
-                logger.info(f"No se encontró precio confiable para {query_text}. Distancia: {distancia}")
+                logger.info(f"Coincidencia RAG muy lejana para '{query_text}' (dist={distancia:.3f}), marcando como pendiente")
         
         # 4. Calcular coste base por unidad
         # Area en m2 * precio por m2

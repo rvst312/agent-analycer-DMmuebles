@@ -108,30 +108,30 @@ def delete_precio_logico(id: str) -> None:
 def query_precios(texto: str, cliente_id: str, version: Optional[str] = None, n_results: int = 5) -> List[Dict[str, Any]]:
     """
     Busca precios similares filtrando por cliente_id, activo=True y opcionalmente por version.
+    Returns [] safely when no documents match or when n_results > collection size.
     """
-    where_clause: Dict[str, Any]
+    conditions: List[Dict[str, Any]] = [
+        {"cliente": {"$eq": cliente_id}},
+        {"activo": {"$eq": True}},
+    ]
     if version:
-        where_clause = {
-            "$and": [
-                {"cliente": {"$eq": cliente_id}},
-                {"version": {"$eq": version}},
-                {"activo": {"$eq": True}}
-            ]
-        }
-    else:
-        where_clause = {
-            "$and": [
-                {"cliente": {"$eq": cliente_id}},
-                {"activo": {"$eq": True}}
-            ]
-        }
-        
-    results = precios_collection.query(
-        query_texts=[texto],
-        n_results=n_results,
-        where=where_clause
-    )
-    
+        conditions.append({"version": {"$eq": version}})
+    where_clause: Dict[str, Any] = {"$and": conditions}
+
+    try:
+        results = precios_collection.query(
+            query_texts=[texto],
+            n_results=n_results,
+            where=where_clause
+        )
+    except Exception as e:
+        # ChromaDB raises ValueError when n_results > number of matching documents (including 0)
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            f"ChromaDB query returned no results for '{texto}' (cliente={cliente_id}): {e}"
+        )
+        return []
+
     formatted_results = []
     if results and results.get("ids") and len(results["ids"]) > 0:
         for i in range(len(results["ids"][0])):
@@ -141,7 +141,7 @@ def query_precios(texto: str, cliente_id: str, version: Optional[str] = None, n_
                 "metadatos": results["metadatas"][0][i] if results.get("metadatas") else {},
                 "distancia": results["distances"][0][i] if results.get("distances") else 0.0
             })
-            
+
     return formatted_results
 
 def seed_datos_ejemplo() -> None:
