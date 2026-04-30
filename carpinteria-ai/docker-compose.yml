@@ -10,6 +10,10 @@ services:
       - POSTGRES_URL=postgresql://user:password@postgres:5432/carpinteria
       - CHROMA_HOST=chroma
       - CHROMA_PORT=8000
+      - LANGGRAPH_ALLOW_MODULES=api.schemas.estimate
+      - UPLOAD_DIR=/app/uploads
+    volumes:
+      - uploads_data:/app/uploads
     depends_on:
       - postgres
       - chroma
@@ -34,16 +38,14 @@ services:
     ports:
       - "8001:8000"
     volumes:
-      - chroma_data:/chroma/chroma
-    environment:
-      - IS_PERSISTENT=TRUE
-      - PERSIST_DIRECTORY=/chroma/chroma
+      - chroma_data:/data
     networks:
       - app-network
 
 volumes:
   postgres_data:
   chroma_data:
+  uploads_data:
 
 networks:
   app-network:

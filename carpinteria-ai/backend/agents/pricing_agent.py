@@ -17,7 +17,7 @@ def get_k_labor(tipo: str) -> float:
         logger.warning(f"Valor inválido para {env_var_name}: {k_labor_str}. Usando 0.0")
         return 0.0
 
-def calculate_pricing(plano: PlanoAnalizado, cliente_id: str) -> Presupuesto:
+def calculate_pricing(plano: PlanoAnalizado, cliente_id: str, on_line_added=None) -> Presupuesto:
     """
     Calcula el presupuesto a partir de un plano analizado.
     Consulta ChromaDB para obtener los precios de los materiales.
@@ -88,7 +88,9 @@ def calculate_pricing(plano: PlanoAnalizado, cliente_id: str) -> Presupuesto:
             precio_pendiente=precio_pendiente
         )
         lineas.append(linea)
-        
+        if on_line_added:
+            on_line_added(linea.model_dump())
+
     return Presupuesto(
         plano_id=plano.plano_id,
         lineas=lineas,

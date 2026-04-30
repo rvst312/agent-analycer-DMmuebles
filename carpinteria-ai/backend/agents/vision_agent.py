@@ -164,8 +164,10 @@ Notas adicionales del cliente: {notes if notes else "Ninguna"}
         except json.JSONDecodeError as e:
             # Intentar reparar un JSON truncado buscando el último objeto completo
             result = _repair_truncated_json(json_content, plano_id, e)
-        
-        # Guardar el razonamiento bruto para auditoría en el grafo
+
+        # Always override Claude's generated plano_id with the actual estimate_id
+        # so the DB upsert in consolidation_agent finds the correct record.
+        result["plano_id"] = plano_id
         result["raw_reasoning"] = raw_reasoning
         
         # Validar con Pydantic

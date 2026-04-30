@@ -4,6 +4,11 @@ from typing import List, Dict, Any, Optional
 from chromadb.utils import embedding_functions
 import chromadb
 
+# Absolute default so ChromaDB finds the same directory regardless of working dir
+_DEFAULT_CHROMA_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_data")
+)
+
 # Use HTTP client when CHROMA_HOST/CHROMA_PORT are set (Docker), otherwise local PersistentClient
 _chroma_host = os.environ.get("CHROMA_HOST")
 _chroma_port = os.environ.get("CHROMA_PORT")
@@ -11,7 +16,7 @@ if _chroma_host and _chroma_port:
     chroma_client = chromadb.HttpClient(host=_chroma_host, port=int(_chroma_port))
 else:
     chroma_client = chromadb.PersistentClient(
-        path=os.environ.get("CHROMA_PERSIST_PATH", "./chroma_data")
+        path=os.environ.get("CHROMA_PERSIST_PATH", _DEFAULT_CHROMA_PATH)
     )
 
 emb_fn = embedding_functions.DefaultEmbeddingFunction()

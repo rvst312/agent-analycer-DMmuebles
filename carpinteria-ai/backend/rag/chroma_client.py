@@ -3,12 +3,16 @@ from typing import List, Dict, Any, Optional
 import chromadb
 from chromadb.config import Settings
 
+_DEFAULT_CHROMA_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_data")
+)
+
 class ChromaClient:
     """
     Cliente para interactuar con ChromaDB para RAG.
     Maneja la persistencia de embeddings y colecciones para precios.
     """
-    def __init__(self, host: Optional[str] = None, port: Optional[int] = None, persist_path: str = "./chroma_data"):
+    def __init__(self, host: Optional[str] = None, port: Optional[int] = None, persist_path: str = _DEFAULT_CHROMA_PATH):
         # Utilizamos PersistentClient si host/port no se proveen
         env_persist_path = os.environ.get("CHROMA_PERSIST_PATH", persist_path)
         env_host = os.environ.get("CHROMA_HOST", host)

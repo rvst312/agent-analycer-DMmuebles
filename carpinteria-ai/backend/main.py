@@ -48,9 +48,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Carpintería AI API", lifespan=lifespan)
 
-# Configurar directorio temporal para subidas
-os.makedirs("/tmp/carpinteria_uploads", exist_ok=True)
-app.mount("/uploads", StaticFiles(directory="/tmp/carpinteria_uploads"), name="uploads")
+# Persistent upload directory — configurable via UPLOAD_DIR env var (mounted volume in Docker)
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/app/uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # Configuración de CORS
 app.add_middleware(

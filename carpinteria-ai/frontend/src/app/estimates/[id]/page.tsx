@@ -1,76 +1,200 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import PlanViewer from "@/components/PlanViewer";
 import EstimateBreakdown from "@/components/EstimateBreakdown";
-import { EstimateDetail, LineaPresupuesto } from "@/types/estimate";
+import { EstimateDetail, LineaPresupuesto, SSEEvent } from "@/types/estimate";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import { Loader2, CheckCircle2, Circle } from "lucide-react";
+
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+const NODES_ORDER = [
+  { key: "receive_input",    label: "Recibiendo plano" },
+  { key: "vision_analysis",  label: "Analizando imagen con IA" },
+  { key: "extract_entities", label: "Extrayendo entidades" },
+  { key: "rag_pricing",      label: "Calculando precios" },
+  { key: "consolidate",      label: "Consolidando presupuesto" },
+];
+
+const TERMINAL = new Set(["human_approval_required", "pending_review", "completed", "rejected", "error", "approved"]);
+
+function NodeProgress({ done, current }: { done: Set<string>; current: string | null }) {
+  return (
+    <ol className="flex flex-col gap-1.5">
+      {NODES_ORDER.map((n) => {
+        const isDone = done.has(n.key);
+        const isActive = current === n.key && !isDone;
+        return (
+          <li key={n.key} className={`flex items-center gap-2 text-sm ${isDone ? "text-green-700" : isActive ? "text-blue-600 font-medium" : "text-gray-400"}`}>
+            {isDone   ? <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
+             : isActive ? <Loader2 className="w-4 h-4 animate-spin text-blue-500 flex-shrink-0" />
+             :            <Circle className="w-4 h-4 flex-shrink-0" />}
+            {n.label}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 export default function EstimatePage() {
   const params = useParams();
   const router = useRouter();
   const estimateId = params.id as string;
+
   const [estimate, setEstimate] = useState<EstimateDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  
-  const [showApproveModal, setShowApproveModal] = useState(false);
-  const [showRejectModal, setShowRejectModal] = useState(false);
-  const [motivoRechazo, setMotivoRechazo] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(true);
+
+  const [doneNodes, setDoneNodes] = useState<Set<string>>(new Set());
+  const [currentNode, setCurrentNode] = useState<string | null>(NODES_ORDER[0].key);
 
   const [lineas, setLineas] = useState<LineaPresupuesto[]>([]);
   const [subtotal, setSubtotal] = useState(0);
   const [iva, setIva] = useState(0);
   const [total, setTotal] = useState(0);
 
-  useEffect(() => {
-    const TERMINAL_STATUSES = new Set(["human_approval_required", "completed", "rejected", "error"]);
-    let intervalId: ReturnType<typeof setInterval> | null = null;
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [motivoRechazo, setMotivoRechazo] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-    const fetchEstimate = async () => {
-      try {
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-        const res = await fetch(`${baseUrl}/estimates/${estimateId}`);
-        if (!res.ok) throw new Error("No se pudo cargar el presupuesto");
-        const data: EstimateDetail = await res.json();
-        setEstimate(data);
+  const esRef = useRef<EventSource | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sseFailed = useRef(false);
+
+  const recalc = (lines: LineaPresupuesto[]) => {
+    const s = lines.filter(l => !l.precio_pendiente).reduce((a, l) => a + l.subtotal, 0);
+    setSubtotal(s);
+    setIva(s * 0.21);
+    setTotal(s + s * 0.21);
+  };
+
+  const handleLineasChange = (nl: LineaPresupuesto[]) => { setLineas(nl); recalc(nl); };
+
+  const stopPoll = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  const stopSSE  = () => { if (esRef.current)  { esRef.current.close(); esRef.current = null; } };
+
+  // fetchEstimate: always resolves (never leaves loading=true)
+  const fetchEstimate = useCallback(async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/estimates/${estimateId}`);
+      if (res.status === 404) {
+        // Workflow checkpoint not yet written — keep polling, don't show error
         setLoading(false);
-        if (data.presupuesto_consolidado) {
-          setLineas(data.presupuesto_consolidado.lineas || []);
-          setSubtotal(data.presupuesto_consolidado.subtotal || 0);
-          setIva(data.presupuesto_consolidado.iva || 0);
-          setTotal(data.presupuesto_consolidado.total || 0);
-        }
-        if (TERMINAL_STATUSES.has(data.status) && intervalId) {
-          clearInterval(intervalId);
-          intervalId = null;
-        }
-      } catch (err: unknown) {
+        return;
+      }
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+
+      const data: EstimateDetail = await res.json();
+      setEstimate(data);
+      setLoading(false);
+
+      if (data.presupuesto_consolidado) {
+        const ls = data.presupuesto_consolidado.lineas || [];
+        setLineas(ls);
+        recalc(ls);
+      }
+
+      if (TERMINAL.has(data.status)) {
+        setIsProcessing(false);
+        stopPoll();
+      }
+    } catch (err) {
+      setLoading(false);
+      if (!sseFailed.current) return; // Only surface errors if SSE also failed
+      setPageError(err instanceof Error ? err.message : "Error desconocido");
+      stopPoll();
+    }
+  }, [estimateId]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const applyEvent = (raw: SSEEvent) => {
+      if (!mounted) return;
+
+      if (raw.type === "current_state") {
         setLoading(false);
-        if (err instanceof Error) setError(err.message);
-        else setError("Error desconocido");
-        if (intervalId) clearInterval(intervalId);
+        // Populate a minimal estimate so the plan image shows immediately
+        setEstimate(prev => prev ?? ({
+          estimate_id: estimateId,
+          status: raw.status,
+          image_url: raw.image_url ?? undefined,
+        } as EstimateDetail));
+        if (raw.lineas?.length) { setLineas(raw.lineas); recalc(raw.lineas); }
+        if (TERMINAL.has(raw.status)) setIsProcessing(false);
+        return;
+      }
+
+      if (raw.type === "line_added") {
+        setLoading(false);
+        setLineas(prev => { const next = [...prev, raw.linea]; recalc(next); return next; });
+        return;
+      }
+
+      if (raw.type === "node_complete") {
+        setLoading(false);
+        const { node, status, presupuesto_calculado, presupuesto_consolidado } = raw;
+        setDoneNodes(prev => { const s = new Set(prev); s.add(node); return s; });
+        setCurrentNode(null);
+
+        if (presupuesto_calculado?.lineas) { setLineas(presupuesto_calculado.lineas); recalc(presupuesto_calculado.lineas); }
+        if (presupuesto_consolidado) {
+          const ls = presupuesto_consolidado.lineas || [];
+          setLineas(ls);
+          recalc(ls);
+        }
+        if (status && TERMINAL.has(status)) setIsProcessing(false);
+
+        // Advance the progress indicator
+        const idx = NODES_ORDER.findIndex(n => n.key === node);
+        if (idx >= 0 && idx < NODES_ORDER.length - 1) setCurrentNode(NODES_ORDER[idx + 1].key);
+        return;
+      }
+
+      if (raw.type === "workflow_paused" || raw.type === "done" || raw.type === "error") {
+        setIsProcessing(false);
+        setCurrentNode(null);
+        stopSSE();
+        fetchEstimate();
+        // Safety net: keep polling until fetchEstimate successfully loads the estimate
+        // (the first call may hit a brief race with the checkpoint write)
+        if (!pollRef.current) {
+          pollRef.current = setInterval(fetchEstimate, 2000);
+        }
+        return;
       }
     };
 
-    fetchEstimate();
-    intervalId = setInterval(fetchEstimate, 5000);
-    return () => { if (intervalId) clearInterval(intervalId); };
-  }, [estimateId]);
+    // Try SSE
+    const es = new EventSource(`${BASE_URL}/estimates/${estimateId}/stream`);
+    esRef.current = es;
 
-  const handleLineasChange = (newLineas: LineaPresupuesto[]) => {
-    setLineas(newLineas);
-    const newSubtotal = newLineas.reduce((acc, l) => acc + l.subtotal, 0);
-    const newIva = newSubtotal * 0.21;
-    const newTotal = newSubtotal + newIva;
-    setSubtotal(newSubtotal);
-    setIva(newIva);
-    setTotal(newTotal);
-  };
+    es.onmessage = (e) => {
+      try { applyEvent(JSON.parse(e.data) as SSEEvent); } catch { /* ignore malformed frames */ }
+    };
+
+    es.onerror = () => {
+      sseFailed.current = true;
+      stopSSE();
+      // Always start polling as fallback — the SSE may have failed for any reason
+      fetchEstimate();
+      if (!pollRef.current) {
+        pollRef.current = setInterval(fetchEstimate, 4000);
+      }
+    };
+
+    return () => {
+      mounted = false;
+      stopSSE();
+      stopPoll();
+    };
+  }, [estimateId, fetchEstimate]);
 
   const handleAction = async (action: "approve" | "reject") => {
     try {
@@ -78,110 +202,115 @@ export default function EstimatePage() {
         toast.error("Por favor, ingresa un motivo para el rechazo.");
         return;
       }
-
       setIsSubmitting(true);
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-      // Obtener token de desarrollo
-      const tokenRes = await fetch(`${baseUrl}/workflow/token`, { method: "POST" });
-      if (!tokenRes.ok) throw new Error("No se pudo obtener el token de autorización");
+      const tokenRes = await fetch(`${BASE_URL}/workflow/token`, { method: "POST" });
+      if (!tokenRes.ok) throw new Error("No se pudo obtener el token");
       const { access_token } = await tokenRes.json();
 
-      const res = await fetch(`${baseUrl}/workflow/resume`, {
+      const res = await fetch(`${BASE_URL}/workflow/resume`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${access_token}`
-        },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${access_token}` },
         body: JSON.stringify({
           thread_id: estimateId,
           action,
-          ajustes: {
-            lineas,
-            subtotal,
-            iva,
-            total,
-          },
+          ajustes: { lineas, subtotal, iva, total },
           motivo: action === "reject" ? motivoRechazo : undefined,
         }),
       });
       if (!res.ok) throw new Error("Error en la acción");
-      
+
       setShowApproveModal(false);
       setShowRejectModal(false);
-      toast.success(action === "approve" ? "Presupuesto aprobado correctamente" : "Presupuesto rechazado correctamente");
+      toast.success(action === "approve" ? "Presupuesto aprobado" : "Presupuesto rechazado");
       router.push("/dashboard");
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        toast.error(err.message);
-      } else {
-        toast.error("Error en la acción");
-      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error en la acción");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  if (loading) return (
-    <div className="p-8 flex flex-col items-center justify-center min-h-[40vh] gap-4">
-      <Loader2 className="h-10 w-10 animate-spin text-primary" />
-      <p className="text-gray-500">Analizando el plano y calculando presupuesto...</p>
-    </div>
-  );
-  if (error) return <div className="p-8 text-red-500">Error: {error}</div>;
-  if (!estimate) return <div className="p-8">No encontrado</div>;
+  if (pageError) return <div className="p-8 text-red-500">Error: {pageError}</div>;
 
-  const TERMINAL_STATUSES = new Set(["human_approval_required", "completed", "rejected", "error"]);
-  const isProcessing = estimate && !TERMINAL_STATUSES.has(estimate.status);
+  const canApprove = estimate?.status === "human_approval_required" || estimate?.status === "pending_review";
 
   return (
-    <div className="p-8">
+    <div className="p-6 max-w-7xl mx-auto">
+      {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-bold">Revisión de Presupuesto #{estimateId.substring(0,8)}</h1>
-        <span className="px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 flex items-center gap-2">
-          {isProcessing && <Loader2 className="h-3 w-3 animate-spin" />}
-          {estimate.status}
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Presupuesto #{estimateId.substring(0, 8)}</h1>
+          {estimate?.cliente_id && <p className="text-sm text-gray-500 mt-0.5">Cliente: {estimate.cliente_id}</p>}
+        </div>
+        <span className={`px-3 py-1 rounded-full text-sm font-medium flex items-center gap-1.5 ${
+          loading || isProcessing  ? "bg-blue-100 text-blue-700" :
+          canApprove               ? "bg-yellow-100 text-yellow-800" :
+          estimate?.status === "error" ? "bg-red-100 text-red-700" :
+          "bg-green-100 text-green-700"
+        }`}>
+          {(loading || isProcessing) && <Loader2 className="w-3 h-3 animate-spin" />}
+          {loading ? "Iniciando análisis…" : (estimate?.status ?? "Procesando")}
         </span>
       </div>
-      {isProcessing && (
-        <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-3 text-yellow-800">
-          <Loader2 className="h-5 w-5 animate-spin flex-shrink-0" />
-          <span>Analizando el plano y calculando presupuesto. Esta página se actualizará automáticamente.</span>
-        </div>
-      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Left: plan + progress */}
         <div className="flex flex-col gap-4">
-          <PlanViewer imageUrl={estimate.image_url ? `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${estimate.image_url}` : undefined} />
-        </div>
-        <div className="flex flex-col gap-4">
-          <EstimateBreakdown 
-            lineas={lineas} 
-            subtotal={subtotal}
-            iva={iva}
-            total={total}
-            onChange={handleLineasChange}
+          <PlanViewer
+            imageUrl={estimate?.image_url ? `${BASE_URL}${estimate.image_url}` : undefined}
           />
-          
-          {estimate.status === "human_approval_required" && (
-            <div className="border rounded-lg p-4 bg-white shadow-sm mt-4 flex flex-col gap-4">
-              <h3 className="text-lg font-semibold">Acciones</h3>
-              <p className="text-sm text-gray-600 mb-2">Revisa el presupuesto y toma una decisión para continuar el proceso.</p>
-              <div className="flex gap-4">
-                <Button 
-                  onClick={() => setShowRejectModal(true)}
-                  variant="destructive"
-                  className="flex-1"
-                >
-                  Rechazar
-                </Button>
-                <Button 
-                  onClick={() => setShowApproveModal(true)}
-                  className="flex-1"
-                >
-                  Aprobar Presupuesto
-                </Button>
+          {isProcessing && (
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Progreso del análisis</p>
+              <NodeProgress done={doneNodes} current={currentNode} />
+            </div>
+          )}
+        </div>
+
+        {/* Right: lines + actions */}
+        <div className="flex flex-col gap-4">
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-700">Líneas del presupuesto</h2>
+              <span className="text-xs text-gray-400 flex items-center gap-1">
+                {isProcessing && lineas.length === 0 && <><Loader2 className="w-3 h-3 animate-spin" /> Calculando…</>}
+                {lineas.length > 0 && `${lineas.length} ítem${lineas.length !== 1 ? "s" : ""}`}
+              </span>
+            </div>
+
+            {lineas.length === 0 && !isProcessing ? (
+              <p className="p-6 text-center text-sm text-gray-400">Sin líneas</p>
+            ) : (
+              <EstimateBreakdown
+                lineas={lineas}
+                subtotal={subtotal}
+                iva={iva}
+                total={total}
+                onChange={handleLineasChange}
+              />
+            )}
+          </div>
+
+          {canApprove && (
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm flex flex-col gap-3">
+              <h3 className="text-sm font-semibold text-gray-700">Acciones</h3>
+              <p className="text-xs text-gray-500">Revisa el presupuesto antes de continuar.</p>
+              <div className="flex gap-3">
+                <Button variant="destructive" className="flex-1" onClick={() => setShowRejectModal(true)}>Rechazar</Button>
+                <Button className="flex-1" onClick={() => setShowApproveModal(true)}>Aprobar y enviar</Button>
               </div>
+            </div>
+          )}
+
+          {estimate?.motivo_rechazo && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+              <span className="font-semibold">Motivo de rechazo: </span>{estimate.motivo_rechazo}
+            </div>
+          )}
+          {estimate?.error && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+              <span className="font-semibold">Error: </span>{estimate.error}
             </div>
           )}
         </div>
@@ -190,26 +319,14 @@ export default function EstimatePage() {
       {/* Approve Modal */}
       {showApproveModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
-            <h3 className="text-xl font-semibold mb-4">Aprobar Presupuesto</h3>
-            <p className="text-gray-600 mb-6">
-              ¿Estás seguro de que deseas aprobar este presupuesto? Se enviará al cliente.
-            </p>
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
+            <h3 className="text-lg font-semibold mb-3">Aprobar presupuesto</h3>
+            <p className="text-sm text-gray-600 mb-6">Se enviará a Holded con las líneas actuales. ¿Confirmar?</p>
             <div className="flex justify-end gap-3">
-              <Button 
-                variant="outline" 
-                onClick={() => setShowApproveModal(false)}
-                disabled={isSubmitting}
-              >
-                Cancelar
-              </Button>
-              <Button 
-                onClick={() => handleAction("approve")}
-                disabled={isSubmitting}
-                className="min-w-[120px]"
-              >
+              <Button variant="outline" onClick={() => setShowApproveModal(false)} disabled={isSubmitting}>Cancelar</Button>
+              <Button onClick={() => handleAction("approve")} disabled={isSubmitting} className="min-w-[110px]">
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                {isSubmitting ? "Aprobando..." : "Sí, aprobar"}
+                {isSubmitting ? "Aprobando…" : "Sí, aprobar"}
               </Button>
             </div>
           </div>
@@ -219,35 +336,21 @@ export default function EstimatePage() {
       {/* Reject Modal */}
       {showRejectModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
-            <h3 className="text-xl font-semibold mb-4">Rechazar Presupuesto</h3>
-            <p className="text-gray-600 mb-4 text-sm">
-              Ingresa el motivo del rechazo para que el equipo pueda revisarlo.
-            </p>
-            <textarea 
-              className="w-full border border-gray-300 rounded-md p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-6" 
-              placeholder="Motivo de rechazo..."
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
+            <h3 className="text-lg font-semibold mb-3">Rechazar presupuesto</h3>
+            <textarea
+              className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 mb-6"
+              placeholder="Motivo de rechazo…"
               value={motivoRechazo}
               onChange={(e) => setMotivoRechazo(e.target.value)}
               rows={4}
               disabled={isSubmitting}
             />
             <div className="flex justify-end gap-3">
-              <Button 
-                variant="outline" 
-                onClick={() => setShowRejectModal(false)}
-                disabled={isSubmitting}
-              >
-                Cancelar
-              </Button>
-              <Button 
-                variant="destructive"
-                onClick={() => handleAction("reject")}
-                disabled={isSubmitting || !motivoRechazo.trim()}
-                className="min-w-[120px]"
-              >
+              <Button variant="outline" onClick={() => setShowRejectModal(false)} disabled={isSubmitting}>Cancelar</Button>
+              <Button variant="destructive" onClick={() => handleAction("reject")} disabled={isSubmitting || !motivoRechazo.trim()} className="min-w-[110px]">
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                {isSubmitting ? "Rechazando..." : "Sí, rechazar"}
+                {isSubmitting ? "Rechazando…" : "Sí, rechazar"}
               </Button>
             </div>
           </div>
