@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Loader2, CheckCircle2, Circle } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const MAX_POLL_ATTEMPTS = 30; // ~60 s at 2 s interval before giving up
 
 const NODES_ORDER = [
   { key: "receive_input",    label: "Recibiendo plano" },
@@ -65,10 +66,13 @@ export default function EstimatePage() {
 
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollCountRef = useRef(0);
   const sseFailed = useRef(false);
 
   const recalc = (lines: LineaPresupuesto[]) => {
-    const s = lines.filter(l => !l.precio_pendiente).reduce((a, l) => a + l.subtotal, 0);
+    const s = lines
+      .filter(l => !l.precio_pendiente)
+      .reduce((a, l) => a + (l.subtotal ?? 0), 0);
     setSubtotal(s);
     setIva(s * 0.21);
     setTotal(s + s * 0.21);
@@ -76,15 +80,30 @@ export default function EstimatePage() {
 
   const handleLineasChange = (nl: LineaPresupuesto[]) => { setLineas(nl); recalc(nl); };
 
-  const stopPoll = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
-  const stopSSE  = () => { if (esRef.current)  { esRef.current.close(); esRef.current = null; } };
+  const stopPoll = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    pollCountRef.current = 0;
+  }, []);
 
-  // fetchEstimate: always resolves (never leaves loading=true)
+  const stopSSE = useCallback(() => {
+    if (esRef.current) { esRef.current.close(); esRef.current = null; }
+  }, []);
+
   const fetchEstimate = useCallback(async () => {
+    // Safety net: stop polling after MAX_POLL_ATTEMPTS to prevent infinite loops
+    pollCountRef.current++;
+    if (pollCountRef.current > MAX_POLL_ATTEMPTS) {
+      stopPoll();
+      setLoading(false);
+      setIsProcessing(false);
+      setPageError("Tiempo de espera agotado. Recarga la página para reintentar.");
+      return;
+    }
+
     try {
       const res = await fetch(`${BASE_URL}/estimates/${estimateId}`);
       if (res.status === 404) {
-        // Workflow checkpoint not yet written — keep polling, don't show error
+        // Estimate not in DB yet — keep polling briefly
         setLoading(false);
         return;
       }
@@ -106,11 +125,11 @@ export default function EstimatePage() {
       }
     } catch (err) {
       setLoading(false);
-      if (!sseFailed.current) return; // Only surface errors if SSE also failed
+      if (!sseFailed.current) return;
       setPageError(err instanceof Error ? err.message : "Error desconocido");
       stopPoll();
     }
-  }, [estimateId]);
+  }, [estimateId, stopPoll]);
 
   useEffect(() => {
     let mounted = true;
@@ -120,7 +139,6 @@ export default function EstimatePage() {
 
       if (raw.type === "current_state") {
         setLoading(false);
-        // Populate a minimal estimate so the plan image shows immediately
         setEstimate(prev => prev ?? ({
           estimate_id: estimateId,
           status: raw.status,
@@ -151,7 +169,6 @@ export default function EstimatePage() {
         }
         if (status && TERMINAL.has(status)) setIsProcessing(false);
 
-        // Advance the progress indicator
         const idx = NODES_ORDER.findIndex(n => n.key === node);
         if (idx >= 0 && idx < NODES_ORDER.length - 1) setCurrentNode(NODES_ORDER[idx + 1].key);
         return;
@@ -160,10 +177,20 @@ export default function EstimatePage() {
       if (raw.type === "workflow_paused" || raw.type === "done" || raw.type === "error") {
         setIsProcessing(false);
         setCurrentNode(null);
+        setLoading(false);
+
+        // For errors: show the message immediately without waiting for fetchEstimate
+        if (raw.type === "error") {
+          setEstimate(prev => ({
+            ...(prev ?? { estimate_id: estimateId, status: "error" }),
+            status: "error",
+            error: raw.error,
+          } as EstimateDetail));
+        }
+
         stopSSE();
+        // Also fetch the full state from the API to get lineas, presupuesto, etc.
         fetchEstimate();
-        // Safety net: keep polling until fetchEstimate successfully loads the estimate
-        // (the first call may hit a brief race with the checkpoint write)
         if (!pollRef.current) {
           pollRef.current = setInterval(fetchEstimate, 2000);
         }
@@ -171,7 +198,6 @@ export default function EstimatePage() {
       }
     };
 
-    // Try SSE
     const es = new EventSource(`${BASE_URL}/estimates/${estimateId}/stream`);
     esRef.current = es;
 
@@ -182,7 +208,6 @@ export default function EstimatePage() {
     es.onerror = () => {
       sseFailed.current = true;
       stopSSE();
-      // Always start polling as fallback — the SSE may have failed for any reason
       fetchEstimate();
       if (!pollRef.current) {
         pollRef.current = setInterval(fetchEstimate, 4000);
@@ -194,7 +219,7 @@ export default function EstimatePage() {
       stopSSE();
       stopPoll();
     };
-  }, [estimateId, fetchEstimate]);
+  }, [estimateId, fetchEstimate, stopSSE, stopPoll]);
 
   const handleAction = async (action: "approve" | "reject") => {
     try {
@@ -231,7 +256,17 @@ export default function EstimatePage() {
     }
   };
 
-  if (pageError) return <div className="p-8 text-red-500">Error: {pageError}</div>;
+  if (pageError) return (
+    <div className="p-8 max-w-xl mx-auto mt-16 text-center">
+      <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+        <p className="text-red-700 font-semibold mb-2">Error</p>
+        <p className="text-red-600 text-sm">{pageError}</p>
+        <Button className="mt-4" variant="outline" onClick={() => window.location.reload()}>
+          Recargar página
+        </Button>
+      </div>
+    </div>
+  );
 
   const canApprove = estimate?.status === "human_approval_required" || estimate?.status === "pending_review";
 
@@ -244,8 +279,8 @@ export default function EstimatePage() {
           {estimate?.cliente_id && <p className="text-sm text-gray-500 mt-0.5">Cliente: {estimate.cliente_id}</p>}
         </div>
         <span className={`px-3 py-1 rounded-full text-sm font-medium flex items-center gap-1.5 ${
-          loading || isProcessing  ? "bg-blue-100 text-blue-700" :
-          canApprove               ? "bg-yellow-100 text-yellow-800" :
+          loading || isProcessing      ? "bg-blue-100 text-blue-700" :
+          canApprove                   ? "bg-yellow-100 text-yellow-800" :
           estimate?.status === "error" ? "bg-red-100 text-red-700" :
           "bg-green-100 text-green-700"
         }`}>

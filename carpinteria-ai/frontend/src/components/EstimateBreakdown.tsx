@@ -75,7 +75,7 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
                   />
                 </td>
                 <td className="px-4 py-3 text-right font-medium">
-                  {linea.subtotal.toFixed(2)}
+                  {(linea.subtotal ?? 0).toFixed(2)}
                 </td>
               </tr>
             ))}
@@ -93,15 +93,15 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
       <div className="mt-6 border-t pt-4">
         <div className="flex justify-end mb-2">
           <span className="text-gray-600 mr-4">Subtotal:</span>
-          <span className="font-medium w-24 text-right">{subtotal.toFixed(2)} €</span>
+          <span className="font-medium w-24 text-right">{(subtotal ?? 0).toFixed(2)} €</span>
         </div>
         <div className="flex justify-end mb-2">
           <span className="text-gray-600 mr-4">IVA (21%):</span>
-          <span className="font-medium w-24 text-right">{iva.toFixed(2)} €</span>
+          <span className="font-medium w-24 text-right">{(iva ?? 0).toFixed(2)} €</span>
         </div>
         <div className="flex justify-end text-lg font-bold">
           <span className="mr-4">Total:</span>
-          <span className="w-24 text-right">{total.toFixed(2)} €</span>
+          <span className="w-24 text-right">{(total ?? 0).toFixed(2)} €</span>
         </div>
       </div>
     </div>

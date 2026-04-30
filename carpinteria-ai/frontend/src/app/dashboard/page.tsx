@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Loader2, FileImage, Clock, CheckCircle, XCircle, AlertCircle, Eye } from "lucide-react";
+import { Loader2, FileImage, Clock, CheckCircle, XCircle, AlertCircle, Eye, Trash2 } from "lucide-react";
 import { EstimateSummary } from "@/types/estimate";
+import { Button } from "@/components/ui/button";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -29,11 +30,45 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function EstimateCard({ est }: { est: EstimateSummary }) {
+function EstimateCard({ est, onDelete }: { est: EstimateSummary, onDelete: (id: string) => void }) {
   const isPendingReview = est.status === "human_approval_required" || est.status === "pending_review";
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`${BASE_URL}/estimates/${est.estimate_id}`, {
+        method: "DELETE",
+      });
+      if (res.ok || res.status === 404) {
+        setShowDeleteModal(false);
+        onDelete(est.estimate_id);
+      } else {
+        console.error("Error al eliminar el presupuesto");
+        alert("Hubo un error al intentar eliminar el presupuesto.");
+        setIsDeleting(false);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Hubo un error al intentar eliminar el presupuesto.");
+      setIsDeleting(false);
+    }
+  };
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow">
+    <>
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow relative">
+        {/* Delete button */}
+        <button 
+          onClick={() => setShowDeleteModal(true)}
+          disabled={isDeleting}
+          className="absolute top-2 right-2 z-10 bg-white/80 backdrop-blur-sm hover:bg-red-50 text-gray-500 hover:text-red-600 p-1.5 rounded-full transition-colors"
+          title="Eliminar presupuesto"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+
       {/* Thumbnail */}
       <div className="relative h-40 bg-gray-100 flex items-center justify-center overflow-hidden">
         {est.image_url ? (
@@ -99,6 +134,27 @@ function EstimateCard({ est }: { est: EstimateSummary }) {
         </div>
       </div>
     </div>
+
+    {/* Delete Modal */}
+    {showDeleteModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
+          <h3 className="text-lg font-semibold mb-3">Eliminar presupuesto</h3>
+          <p className="text-sm text-gray-600 mb-6">
+            ¿Estás seguro de que deseas eliminar el presupuesto de <span className="font-semibold">{est.cliente_id || est.estimate_id.substring(0, 8)}</span>? 
+            Esta acción no se puede deshacer.
+          </p>
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setShowDeleteModal(false)} disabled={isDeleting}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={isDeleting} className="min-w-[110px]">
+              {isDeleting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              {isDeleting ? "Eliminando…" : "Sí, eliminar"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -125,6 +181,10 @@ export default function DashboardPage() {
     const interval = setInterval(fetchEstimates, 15000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleDelete = (id: string) => {
+    setEstimates(prev => prev.filter(e => e.estimate_id !== id));
+  };
 
   const pending = estimates.filter(e => e.status === "human_approval_required" || e.status === "pending_review");
   const rest = estimates.filter(e => e.status !== "human_approval_required" && e.status !== "pending_review");
@@ -154,7 +214,7 @@ export default function DashboardPage() {
                 <Clock className="w-4 h-4" /> Pendientes de revisión ({pending.length})
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {pending.map(est => <EstimateCard key={est.estimate_id} est={est} />)}
+                {pending.map(est => <EstimateCard key={est.estimate_id} est={est} onDelete={handleDelete} />)}
               </div>
             </section>
           )}
@@ -165,7 +225,7 @@ export default function DashboardPage() {
                 Todos los presupuestos
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {rest.map(est => <EstimateCard key={est.estimate_id} est={est} />)}
+                {rest.map(est => <EstimateCard key={est.estimate_id} est={est} onDelete={handleDelete} />)}
               </div>
             </section>
           )}
