@@ -72,6 +72,14 @@ export default function EstimatePage() {
   const pollCountRef = useRef(0);
   const sseFailed = useRef(false);
 
+  const formatLineas = (lines: LineaPresupuesto[]) => {
+    return lines.map(l => ({
+      ...l,
+      precio_unitario: Number(Number(l.precio_unitario || 0).toFixed(2)),
+      subtotal: Number(Number(l.subtotal ?? ((l.cantidad || 0) * (l.precio_unitario || 0))).toFixed(2))
+    }));
+  };
+
   const recalc = (lines: LineaPresupuesto[]) => {
     const s = lines
       .filter(l => !l.precio_pendiente)
@@ -121,7 +129,7 @@ export default function EstimatePage() {
       }
 
       if (data.presupuesto_consolidado) {
-        const ls = data.presupuesto_consolidado.lineas || [];
+        const ls = formatLineas(data.presupuesto_consolidado.lineas || []);
         setLineas(ls);
         recalc(ls);
       }
@@ -151,14 +159,22 @@ export default function EstimatePage() {
           status: raw.status,
           image_url: raw.image_url ?? undefined,
         } as EstimateDetail));
-        if (raw.lineas?.length) { setLineas(raw.lineas); recalc(raw.lineas); }
+        if (raw.lineas?.length) { 
+          const ls = formatLineas(raw.lineas);
+          setLineas(ls); 
+          recalc(ls); 
+        }
         if (TERMINAL.has(raw.status)) setIsProcessing(false);
         return;
       }
 
       if (raw.type === "line_added") {
         setLoading(false);
-        setLineas(prev => { const next = [...prev, raw.linea]; recalc(next); return next; });
+        setLineas(prev => { 
+          const next = formatLineas([...prev, raw.linea]); 
+          recalc(next); 
+          return next; 
+        });
         return;
       }
 
@@ -172,9 +188,13 @@ export default function EstimatePage() {
           setPlanoAnalizado(raw.plano_analizado as PlanoAnalizado);
         }
 
-        if (presupuesto_calculado?.lineas) { setLineas(presupuesto_calculado.lineas); recalc(presupuesto_calculado.lineas); }
+        if (presupuesto_calculado?.lineas) { 
+          const ls = formatLineas(presupuesto_calculado.lineas);
+          setLineas(ls); 
+          recalc(ls); 
+        }
         if (presupuesto_consolidado) {
-          const ls = presupuesto_consolidado.lineas || [];
+          const ls = formatLineas(presupuesto_consolidado.lineas || []);
           setLineas(ls);
           recalc(ls);
         }
@@ -300,9 +320,9 @@ export default function EstimatePage() {
         </span>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         {/* Left: plan + progress */}
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4 sticky top-24">
           <PlanViewer
             imageUrl={estimate?.image_url ? `${BASE_URL}${estimate.image_url}` : undefined}
           />

@@ -5,7 +5,7 @@ import PriceTable from '@/components/PriceTable';
 import { knowledgeApi } from '@/lib/knowledge-api';
 import { PrecioResponse } from '@/types/knowledge';
 import { toast } from 'sonner';
-import { Upload, Loader2, Search, Filter } from 'lucide-react';
+import { Upload, Loader2, Search, Filter, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 type ApiError = { response?: { data?: { detail?: unknown } } };
@@ -114,6 +114,37 @@ export default function KnowledgePage() {
     return matchCliente && matchCategoria;
   });
 
+  const handleExportCSV = () => {
+    if (preciosFiltrados.length === 0) {
+      toast.warning('No hay datos para exportar');
+      return;
+    }
+
+    const headers = ['ID', 'Material', 'Categoría', 'Cliente', 'Precio Unitario', 'Unidad'];
+    
+    const rows = preciosFiltrados.map(p => [
+      p.id,
+      `"${p.metadatos.material.replace(/"/g, '""')}"`,
+      `"${p.metadatos.categoria.replace(/"/g, '""')}"`,
+      `"${p.metadatos.cliente.replace(/"/g, '""')}"`,
+      p.metadatos.precio_unitario.toString(),
+      `"${p.metadatos.unidad.replace(/"/g, '""')}"`
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `base_de_precios_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    toast.success('Archivo CSV exportado correctamente');
+  };
+
   return (
     <div className="p-8 max-w-7xl mx-auto">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
@@ -123,6 +154,14 @@ export default function KnowledgePage() {
         </div>
         
         <div className="flex items-center gap-3">
+          <Button 
+            variant="outline"
+            onClick={handleExportCSV} 
+            className="flex items-center gap-2"
+          >
+            <Download className="w-4 h-4" />
+            Exportar CSV
+          </Button>
           <input 
             type="file" 
             ref={fileInputRef} 

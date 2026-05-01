@@ -3,23 +3,19 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import ContactSearch from "@/components/ContactSearch";
 import { File as FileIcon, Image as ImageIcon, Loader2, Upload, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "application/pdf"];
 
-// Mock clients (until Holded API is fully integrated)
-const MOCK_CLIENTS = [
-  { id: "client_001", name: "Constructora Alfa S.A." },
-  { id: "client_002", name: "Reformas Integrales Madrid" },
-  { id: "client_003", name: "Estudio Arquitectura Vértice" },
-  { id: "client_004", name: "Promociones Costa Blanca" },
-  { id: "default_client", name: "Cliente General" },
-];
+interface HoldedContact {
+  id: string;
+  name: string;
+}
 
 export default function UploadForm() {
   const router = useRouter();
@@ -28,7 +24,28 @@ export default function UploadForm() {
   const [clientId, setClientId] = useState<string>("");
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [contacts, setContacts] = useState<HoldedContact[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(true);
+  const [contactsError, setContactsError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    fetch(`${baseUrl}/holded/contacts`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Error ${res.status}`);
+        return res.json() as Promise<HoldedContact[]>;
+      })
+      .then((data) => {
+        setContacts(data);
+        setContactsLoading(false);
+      })
+      .catch((err) => {
+        console.error("Error loading Holded contacts:", err);
+        setContactsError("No se pudieron cargar los clientes de Holded.");
+        setContactsLoading(false);
+      });
+  }, []);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -91,12 +108,12 @@ export default function UploadForm() {
 
   const handleSubmit = async (e?: React.FormEvent | React.MouseEvent) => {
     if (e) e.preventDefault();
-    
+
     if (!file) {
       toast.error("Por favor selecciona un plano.");
       return;
     }
-    
+
     if (!clientId) {
       toast.error("Por favor selecciona un cliente.");
       return;
@@ -109,12 +126,10 @@ export default function UploadForm() {
       formData.append("file", file);
       formData.append("cliente_id", clientId);
 
-      // Usar fetch estándar directamente en lugar de apiClient
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
       const response = await fetch(`${baseUrl}/estimates`, {
         method: "POST",
         body: formData,
-        // ¡NO establecer Content-Type aquí! El navegador lo hace automáticamente con el boundary para multipart/form-data
       });
 
       if (response.ok || response.status === 202) {
@@ -142,23 +157,19 @@ export default function UploadForm() {
           Sube el plano (PDF, PNG o JPG) para iniciar el proceso de presupuestación.
         </CardDescription>
       </CardHeader>
-      
+
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
-            <Label htmlFor="client-select">Cliente</Label>
-            <Select value={clientId} onValueChange={setClientId} disabled={isUploading}>
-              <SelectTrigger id="client-select">
-                <SelectValue placeholder="Selecciona un cliente de Holded..." />
-              </SelectTrigger>
-              <SelectContent>
-                {MOCK_CLIENTS.map((client) => (
-                  <SelectItem key={client.id} value={client.id}>
-                    {client.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label htmlFor="client-search">Cliente</Label>
+            <ContactSearch
+              contacts={contacts}
+              loading={contactsLoading}
+              error={contactsError}
+              value={clientId}
+              onChange={setClientId}
+              disabled={isUploading}
+            />
           </div>
 
           <div className="space-y-2">
@@ -203,7 +214,7 @@ export default function UploadForm() {
                 >
                   <X className="h-4 w-4" />
                 </Button>
-                
+
                 {previewUrl ? (
                   <div className="relative w-full h-48 rounded-md overflow-hidden bg-black/5 flex items-center justify-center">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -219,7 +230,7 @@ export default function UploadForm() {
                     <span className="font-medium">{file.name}</span>
                   </div>
                 )}
-                
+
                 <div className="mt-4 flex items-center justify-between text-sm">
                   <div className="flex items-center text-muted-foreground truncate mr-4">
                     {file.type.startsWith("image/") ? (
@@ -238,13 +249,13 @@ export default function UploadForm() {
           </div>
         </form>
       </CardContent>
-      
+
       <CardFooter>
-        <Button 
-          className="w-full" 
-          size="lg" 
-          onClick={handleSubmit} 
-          disabled={!file || !clientId || isUploading}
+        <Button
+          className="w-full"
+          size="lg"
+          onClick={handleSubmit}
+          disabled={!file || !clientId || isUploading || contactsLoading}
         >
           {isUploading ? (
             <>
