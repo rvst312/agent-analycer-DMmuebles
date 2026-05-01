@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import PlanViewer from "@/components/PlanViewer";
 import EstimateBreakdown from "@/components/EstimateBreakdown";
 import ComponentsEditor from "@/components/ComponentsEditor";
-import { ComponenteArmario, EstimateDetail, LineaPresupuesto, PlanoAnalizado, SSEEvent } from "@/types/estimate";
+import { EstimateDetail, LineaPresupuesto, PlanoAnalizado, SSEEvent } from "@/types/estimate";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { BrainCircuit, CheckCircle2, Circle, Loader2 } from "lucide-react";

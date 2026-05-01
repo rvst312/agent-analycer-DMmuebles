@@ -18,6 +18,21 @@ class PresupuestoModel(Base):
     lineas_pendientes = Column(JSON, nullable=False, default=list)
     status = Column(String, default="processing", nullable=False)
     holded_estimate_id = Column(String, nullable=True)
+    proyecto_id = Column(String, nullable=True, index=True)
+    nombre_modulo = Column(String, nullable=True)
+    resumen = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ProyectoModel(Base):
+    __tablename__ = "proyectos"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    cliente_id = Column(String, nullable=False)
+    status = Column(String, default="processing", nullable=False)
+    estimate_ids = Column(JSON, nullable=False, default=list)
+    holded_estimate_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 

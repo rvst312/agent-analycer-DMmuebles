@@ -57,6 +57,35 @@ export interface EstimateDetail {
   error?: string;
 }
 
+export interface ResumenModulo {
+  nombre: string;
+  descripcion: string;
+  subtotal: number;
+  total_con_iva: number;
+}
+
+export interface ModuloProyecto {
+  estimate_id: string;
+  nombre_modulo: string;
+  status: string;
+  subtotal: number;
+  iva: number;
+  total: number;
+  lineas: LineaPresupuesto[];
+  lineas_pendientes: LineaPresupuesto[];
+  resumen?: ResumenModulo;
+  image_url?: string;
+}
+
+export interface ProyectoDetail {
+  proyecto_id: string;
+  cliente_id: string;
+  status: string;
+  holded_estimate_id?: string;
+  modulos: ModuloProyecto[];
+  total: number;
+}
+
 // SSE event shapes
 export type SSEEvent =
   | { type: "current_state"; status: string; total: number; lineas: LineaPresupuesto[]; image_url?: string }

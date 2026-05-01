@@ -43,6 +43,12 @@ class Presupuesto(BaseModel):
     lineas: List[LineaPresupuesto]
     total: float
 
+class ResumenModulo(BaseModel):
+    nombre: str
+    descripcion: str
+    subtotal: float
+    total_con_iva: float
+
 class PresupuestoConsolidado(BaseModel):
     cliente_id: str
     plano_id: str
@@ -52,3 +58,5 @@ class PresupuestoConsolidado(BaseModel):
     total: float
     lineas_pendientes: List[LineaPresupuesto]
     status: str = "pending_review"
+    resumen: Optional[ResumenModulo] = None
+    nombre_modulo: Optional[str] = None

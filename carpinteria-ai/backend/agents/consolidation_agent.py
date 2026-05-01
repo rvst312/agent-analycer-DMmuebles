@@ -1,9 +1,9 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
-from api.schemas.estimate import LineaPresupuesto, Presupuesto, PresupuestoConsolidado
+from api.schemas.estimate import LineaPresupuesto, Presupuesto, PresupuestoConsolidado, ResumenModulo
 from db.models import PresupuestoModel
 from db.persistence import async_session_maker
 from sqlalchemy import select
@@ -11,7 +11,22 @@ from sqlalchemy import select
 logger = logging.getLogger(__name__)
 
 
-def calcular_presupuesto_consolidado(presupuesto: Presupuesto, cliente_id: str) -> PresupuestoConsolidado:
+def _generate_resumen(nombre: str, lineas: List[LineaPresupuesto], subtotal: float) -> ResumenModulo:
+    top = sorted([l for l in lineas if not l.precio_pendiente], key=lambda x: x.subtotal, reverse=True)[:3]
+    partes = [f"{l.descripcion.split(chr(10))[0][:40]}" for l in top]
+    descripcion = "; ".join(partes) if partes else "Módulo de carpintería"
+    iva = subtotal * 0.21
+    return ResumenModulo(
+        nombre=nombre or "Módulo",
+        descripcion=descripcion,
+        subtotal=round(subtotal, 2),
+        total_con_iva=round(subtotal + iva, 2),
+    )
+
+
+def calcular_presupuesto_consolidado(
+    presupuesto: Presupuesto, cliente_id: str, nombre_modulo: str = ""
+) -> PresupuestoConsolidado:
     subtotal = 0.0
     lineas_resueltas: List[LineaPresupuesto] = []
     lineas_pendientes: List[LineaPresupuesto] = []
@@ -25,6 +40,7 @@ def calcular_presupuesto_consolidado(presupuesto: Presupuesto, cliente_id: str) 
 
     iva = subtotal * 0.21
     total = subtotal + iva
+    resumen = _generate_resumen(nombre_modulo, presupuesto.lineas, subtotal) if nombre_modulo else None
 
     return PresupuestoConsolidado(
         cliente_id=cliente_id,
@@ -34,7 +50,9 @@ def calcular_presupuesto_consolidado(presupuesto: Presupuesto, cliente_id: str) 
         iva=iva,
         total=total,
         lineas_pendientes=lineas_pendientes,
-        status="pending_review"
+        status="pending_review",
+        resumen=resumen,
+        nombre_modulo=nombre_modulo or None,
     )
 
 
@@ -60,6 +78,8 @@ async def guardar_presupuesto_en_db(consolidado: PresupuestoConsolidado) -> Pres
             record.lineas = lineas_json
             record.lineas_pendientes = pendientes_json
             record.status = "pending_review"
+            record.nombre_modulo = consolidado.nombre_modulo
+            record.resumen = consolidado.resumen.model_dump() if consolidado.resumen else None
             record.updated_at = now
             await session.commit()
             await session.refresh(record)
@@ -76,6 +96,8 @@ async def guardar_presupuesto_en_db(consolidado: PresupuestoConsolidado) -> Pres
                 lineas=lineas_json,
                 lineas_pendientes=pendientes_json,
                 status="pending_review",
+                nombre_modulo=consolidado.nombre_modulo,
+                resumen=consolidado.resumen.model_dump() if consolidado.resumen else None,
             )
             session.add(nuevo)
             await session.commit()
@@ -84,7 +106,9 @@ async def guardar_presupuesto_en_db(consolidado: PresupuestoConsolidado) -> Pres
             return nuevo
 
 
-async def execute_consolidation(presupuesto: Presupuesto, cliente_id: str) -> PresupuestoConsolidado:
-    consolidado = calcular_presupuesto_consolidado(presupuesto, cliente_id)
+async def execute_consolidation(
+    presupuesto: Presupuesto, cliente_id: str, nombre_modulo: str = ""
+) -> PresupuestoConsolidado:
+    consolidado = calcular_presupuesto_consolidado(presupuesto, cliente_id, nombre_modulo)
     await guardar_presupuesto_en_db(consolidado)
     return consolidado

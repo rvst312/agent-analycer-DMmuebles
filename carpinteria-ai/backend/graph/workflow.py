@@ -38,6 +38,8 @@ class GraphState(TypedDict):
     presupuesto_calculado: Optional[Dict[str, Any]]
     motivo_rechazo: Optional[str]
     content_type: Optional[str]
+    proyecto_id: Optional[str]
+    nombre_modulo: Optional[str]
 
 
 async def _update_db_status(estimate_id: str, status: str) -> None:
@@ -148,8 +150,9 @@ async def consolidate(state: GraphState):
     try:
         presupuesto = Presupuesto(**pricing_result)
         cliente_id = state.get("cliente_id", "unknown")
+        nombre_modulo = state.get("nombre_modulo") or ""
 
-        consolidado = await execute_consolidation(presupuesto, cliente_id)
+        consolidado = await execute_consolidation(presupuesto, cliente_id, nombre_modulo)
 
         return {
             "status": "consolidated",
@@ -198,6 +201,23 @@ async def send_to_holded(state: GraphState):
     consolidado_dict = state.get("presupuesto_consolidado")
     if not consolidado_dict:
         return {"status": "error", "error": "No hay presupuesto consolidado para enviar a Holded"}
+
+    # Modules that belong to a multi-file project skip Holded here;
+    # the project approve endpoint sends a single consolidated estimate.
+    if state.get("proyecto_id"):
+        logger.info(f"send_to_holded: skipping for project module (proyecto_id={state['proyecto_id']})")
+        plano_id = state.get("plano_id")
+        if plano_id:
+            async with async_session_maker() as session:
+                result = await session.execute(
+                    select(PresupuestoModel).where(PresupuestoModel.plano_id == plano_id)
+                )
+                presupuesto_db = result.scalar_one_or_none()
+                if presupuesto_db:
+                    presupuesto_db.status = "approved"
+                    presupuesto_db.updated_at = datetime.now(timezone.utc)
+                    await session.commit()
+        return {"status": "sent_to_holded"}
 
     try:
         presupuesto = PresupuestoConsolidado(**consolidado_dict)

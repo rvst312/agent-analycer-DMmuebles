@@ -50,6 +50,9 @@ def _apply_migrations(conn):
     new_cols = {
         "image_path": "ALTER TABLE presupuestos ADD COLUMN image_path TEXT",
         "updated_at": f"ALTER TABLE presupuestos ADD COLUMN updated_at {ts_type}",
+        "proyecto_id": "ALTER TABLE presupuestos ADD COLUMN proyecto_id TEXT",
+        "nombre_modulo": "ALTER TABLE presupuestos ADD COLUMN nombre_modulo TEXT",
+        "resumen": "ALTER TABLE presupuestos ADD COLUMN resumen JSON",
     }
     for col, sql in new_cols.items():
         if col not in existing:
