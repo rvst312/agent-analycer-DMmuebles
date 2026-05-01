@@ -4,10 +4,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import PlanViewer from "@/components/PlanViewer";
 import EstimateBreakdown from "@/components/EstimateBreakdown";
-import { EstimateDetail, LineaPresupuesto, SSEEvent } from "@/types/estimate";
+import ComponentsEditor from "@/components/ComponentsEditor";
+import { ComponenteArmario, EstimateDetail, LineaPresupuesto, PlanoAnalizado, SSEEvent } from "@/types/estimate";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Loader2, CheckCircle2, Circle } from "lucide-react";
+import { BrainCircuit, CheckCircle2, Circle, Loader2 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const MAX_POLL_ATTEMPTS = 30; // ~60 s at 2 s interval before giving up
@@ -61,8 +62,10 @@ export default function EstimatePage() {
 
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showLearnModal, setShowLearnModal] = useState(false);
   const [motivoRechazo, setMotivoRechazo] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [planoAnalizado, setPlanoAnalizado] = useState<PlanoAnalizado | null>(null);
 
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -113,6 +116,10 @@ export default function EstimatePage() {
       setEstimate(data);
       setLoading(false);
 
+      if (data.plano_analizado?.componentes?.length) {
+        setPlanoAnalizado(data.plano_analizado);
+      }
+
       if (data.presupuesto_consolidado) {
         const ls = data.presupuesto_consolidado.lineas || [];
         setLineas(ls);
@@ -160,6 +167,10 @@ export default function EstimatePage() {
         const { node, status, presupuesto_calculado, presupuesto_consolidado } = raw;
         setDoneNodes(prev => { const s = new Set(prev); s.add(node); return s; });
         setCurrentNode(null);
+
+        if (raw.plano_analizado && (raw.plano_analizado as PlanoAnalizado).componentes?.length) {
+          setPlanoAnalizado(raw.plano_analizado as PlanoAnalizado);
+        }
 
         if (presupuesto_calculado?.lineas) { setLineas(presupuesto_calculado.lineas); recalc(presupuesto_calculado.lineas); }
         if (presupuesto_consolidado) {
@@ -327,6 +338,26 @@ export default function EstimatePage() {
             )}
           </div>
 
+          {planoAnalizado && (
+            <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 shadow-sm flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-purple-800">Aprendizaje Automático</p>
+                <p className="text-xs text-purple-600 mt-0.5">
+                  {planoAnalizado.componentes.length} componente{planoAnalizado.componentes.length !== 1 ? "s" : ""} detectados · confianza {Math.round(planoAnalizado.confidence_score * 100)}%
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-purple-300 text-purple-700 hover:bg-purple-100 gap-1.5"
+                onClick={() => setShowLearnModal(true)}
+              >
+                <BrainCircuit className="w-4 h-4" />
+                Corregir y aprender
+              </Button>
+            </div>
+          )}
+
           {canApprove && (
             <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm flex flex-col gap-3">
               <h3 className="text-sm font-semibold text-gray-700">Acciones</h3>
@@ -387,6 +418,33 @@ export default function EstimatePage() {
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                 {isSubmitting ? "Rechazando…" : "Sí, rechazar"}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Learning Modal */}
+      {showLearnModal && planoAnalizado && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-4xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <div className="flex items-center gap-2">
+                <BrainCircuit className="w-5 h-5 text-purple-600" />
+                <h3 className="text-lg font-semibold">Aprendizaje Automático</h3>
+              </div>
+              <button
+                onClick={() => setShowLearnModal(false)}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+            <div className="overflow-y-auto p-6 flex-1">
+              <ComponentsEditor
+                estimateId={estimateId}
+                originalComponents={planoAnalizado.componentes}
+                onClose={() => setShowLearnModal(false)}
+              />
             </div>
           </div>
         </div>

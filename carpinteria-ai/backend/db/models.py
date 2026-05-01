@@ -31,3 +31,14 @@ class JobLogModel(Base):
     error_type = Column(String, nullable=True)
     mensaje = Column(String, nullable=False)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ComponentFeedbackModel(Base):
+    __tablename__ = "component_feedback"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    plano_id = Column(String, nullable=False, index=True)
+    cliente_id = Column(String, nullable=True)
+    componentes_originales = Column(JSON, nullable=False, default=list)
+    componentes_corregidos = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

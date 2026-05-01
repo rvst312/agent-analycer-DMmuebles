@@ -63,6 +63,7 @@ app.add_middleware(
 )
 
 from api.routes.estimates import router as estimates_router
+from api.routes.holded import router as holded_router
 from api.routes.knowledge import router as knowledge_router
 from api.routes.workflow import router as workflow_router
 
@@ -76,6 +77,7 @@ def health_check():
     return {"status": "healthy"}
 
 app.include_router(estimates_router)
+app.include_router(holded_router)
 app.include_router(knowledge_router)
 app.include_router(workflow_router)
 

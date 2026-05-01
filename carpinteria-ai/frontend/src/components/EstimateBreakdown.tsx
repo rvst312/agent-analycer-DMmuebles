@@ -12,17 +12,15 @@ interface EstimateBreakdownProps {
 }
 
 export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChange }: EstimateBreakdownProps) {
-  const handleLineChange = (index: number, field: keyof LineaPresupuesto, value: number) => {
+  const handleLineChange = (index: number, field: keyof LineaPresupuesto, value: number | string) => {
     const newLineas = [...lineas];
     const updatedLine = { ...newLineas[index], [field]: value };
-    // Recalculate subtotal for the line
-    updatedLine.subtotal = updatedLine.cantidad * updatedLine.precio_unitario;
-    
-    // Si editamos el precio unitario y estaba pendiente, lo marcamos como resuelto
-    if (field === 'precio_unitario' && updatedLine.precio_pendiente && value > 0) {
+    if (field !== 'descripcion') {
+      updatedLine.subtotal = updatedLine.cantidad * updatedLine.precio_unitario;
+    }
+    if (field === 'precio_unitario' && updatedLine.precio_pendiente && (value as number) > 0) {
       updatedLine.precio_pendiente = false;
     }
-    
     newLineas[index] = updatedLine;
     onChange(newLineas);
   };
@@ -47,8 +45,13 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
                 key={idx} 
                 className={`border-b ${linea.precio_pendiente ? 'bg-yellow-50' : 'bg-white'}`}
               >
-                <td className="px-4 py-3 font-medium text-gray-900">
-                  {linea.descripcion}
+                <td className="px-4 py-3">
+                  <input
+                    type="text"
+                    className="w-full border rounded p-1 text-sm font-medium text-gray-900 focus:ring-1 focus:ring-blue-400"
+                    value={linea.descripcion}
+                    onChange={(e) => handleLineChange(idx, 'descripcion', e.target.value)}
+                  />
                   {linea.precio_pendiente && (
                     <div className="text-xs text-yellow-600 mt-1 font-semibold">
                       ⚠️ Precio pendiente

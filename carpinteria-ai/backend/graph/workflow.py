@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import logging
 import os
 from datetime import datetime, timezone
@@ -13,6 +14,8 @@ from db.models import JobLogModel, PresupuestoModel
 from db.persistence import async_session_maker
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
+from rag.embeddings import upsert_precio
+from rag.vision_feedback import get_recent_corrections
 from services.holded_service import crear_presupuesto
 from services.notification_service import notify_n8n_error
 from sqlalchemy import select
@@ -59,10 +62,9 @@ def receive_input(state: GraphState):
     return {"status": "received"}
 
 
-def vision_analysis(state: GraphState):
+async def vision_analysis(state: GraphState):
     logger.info("Node: vision_analysis")
     file_path = state.get("archivo_path")
-    # Derive plano_id early so handle_error can find the DB record even on early failure
     plano_id = state.get("thread_id") or state.get("cliente_id", "unknown")
 
     if not file_path:
@@ -82,16 +84,23 @@ def vision_analysis(state: GraphState):
     except Exception as e:
         return {"status": "error", "error": f"Failed to read image file: {str(e)}"}
 
-    plano_id = state.get("thread_id") or state.get("cliente_id", "unknown")
+    # Fetch few-shot examples from stored corrections for this client
+    cliente_id = state.get("cliente_id", "unknown")
+    few_shot_examples = await get_recent_corrections(cliente_id, n=3)
+    if few_shot_examples:
+        logger.info(f"vision_analysis: injecting {len(few_shot_examples)} few-shot examples for cliente={cliente_id}")
 
-    result = analyze_plan(image_base64=image_base64, media_type=media_type, plano_id=plano_id)
+    result = analyze_plan(
+        image_base64=image_base64,
+        media_type=media_type,
+        plano_id=plano_id,
+        few_shot_examples=few_shot_examples,
+    )
 
     if result.error:
         import json as _json
         return {"status": "error", "error": result.error, "plano_analizado": _json.loads(result.model_dump_json()), "plano_id": plano_id}
 
-    # model_dump_json() serialises Enum values to plain strings so LangGraph
-    # can checkpoint without the TipoComponente serialisation warning.
     import json as _json
     return {"status": "vision_analyzed", "plano_analizado": _json.loads(result.model_dump_json()), "plano_id": plano_id}
 
@@ -218,6 +227,64 @@ async def send_to_holded(state: GraphState):
         return {"status": "error", "error": f"Error enviando a Holded: {str(e)}"}
 
 
+async def learn_prices(state: GraphState):
+    """Upsert confirmed line prices back into ChromaDB so future estimates improve."""
+    logger.info("Node: learn_prices")
+
+    consolidado_dict = state.get("presupuesto_consolidado")
+    plano_dict = state.get("plano_analizado")
+
+    if not consolidado_dict or not plano_dict:
+        logger.warning("learn_prices: missing state, skipping learning")
+        return {}
+
+    try:
+        consolidado = PresupuestoConsolidado(**consolidado_dict)
+        plano = PlanoAnalizado(**plano_dict)
+    except Exception as e:
+        logger.error(f"learn_prices: failed to parse state: {e}")
+        return {}
+
+    learned = 0
+    for idx, linea in enumerate(consolidado.lineas):
+        if linea.precio_pendiente or linea.precio_unitario <= 0:
+            continue
+
+        if idx >= len(plano.componentes):
+            continue
+
+        comp = plano.componentes[idx]
+        material = comp.material.strip()
+        acabado = comp.acabado.strip()
+        tipo = comp.tipo.value
+
+        query_text = f"{material} {acabado} {tipo}"
+        doc_id = "learned_" + hashlib.md5(query_text.lower().encode()).hexdigest()[:16]
+
+        metadatos = {
+            "material": material,
+            "acabado": acabado,
+            "tipo": tipo,
+            "cliente": "general",
+            "precio_unitario": linea.precio_unitario,
+            "unidad": "m2",
+            "version": "learned",
+            "categoria": tipo,
+            "source": "human_approved",
+            "activo": True,
+        }
+
+        try:
+            upsert_precio(doc_id, query_text, metadatos)
+            learned += 1
+            logger.info(f"learn_prices: '{query_text}' → {linea.precio_unitario:.2f} €/m2")
+        except Exception as e:
+            logger.error(f"learn_prices: failed to upsert '{query_text}': {e}")
+
+    logger.info(f"learn_prices: {learned}/{len(consolidado.lineas)} prices learned")
+    return {}
+
+
 async def notify_team(state: GraphState):
     logger.info("Node: notify_team")
     if state.get("status") == "rejected":
@@ -277,6 +344,7 @@ workflow.add_node("rag_pricing", rag_pricing)
 workflow.add_node("consolidate", consolidate)
 workflow.add_node("human_approval", human_approval)
 workflow.add_node("send_to_holded", send_to_holded)
+workflow.add_node("learn_prices", learn_prices)
 workflow.add_node("notify_team", notify_team)
 workflow.add_node("handle_error", handle_error)
 
@@ -332,8 +400,10 @@ workflow.add_conditional_edges(
 workflow.add_conditional_edges(
     "send_to_holded",
     check_error,
-    {"error": "handle_error", "continue": "notify_team"}
+    {"error": "handle_error", "continue": "learn_prices"}
 )
+# learn_prices is best-effort: failures are logged but never block the workflow
+workflow.add_edge("learn_prices", "notify_team")
 workflow.add_conditional_edges(
     "notify_team",
     check_error,

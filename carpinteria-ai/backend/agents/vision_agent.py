@@ -2,7 +2,7 @@ import base64
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import anthropic
 from api.schemas.estimate import (ComponenteArmario, PlanoAnalizado,
@@ -56,7 +56,33 @@ Tu objetivo es extraer información detallada sobre los componentes de madera, h
 Sigue las instrucciones cuidadosamente y utiliza el formato especificado.
 """
 
-def analyze_plan(image_base64: str, media_type: str = "image/jpeg", notes: Optional[str] = None, plano_id: str = "unknown") -> PlanoAnalizado:
+
+def _build_examples_section(examples: List[List[Dict[str, Any]]]) -> str:
+    """Format corrected components as a few-shot block to inject into the prompt."""
+    if not examples:
+        return ""
+    lines = [
+        "<learned_examples>",
+        "Los siguientes ejemplos muestran cómo se han identificado y corregido componentes en planos anteriores de este cliente.",
+        "Usa el mismo vocabulario de materiales, acabados y tipos de componentes:",
+        "",
+    ]
+    for i, comps in enumerate(examples, 1):
+        compact = json.dumps(comps, ensure_ascii=False, separators=(",", ":"))
+        lines.append(f"<example index=\"{i}\">")
+        lines.append(compact)
+        lines.append("</example>")
+    lines.append("</learned_examples>")
+    return "\n".join(lines) + "\n\n"
+
+
+def analyze_plan(
+    image_base64: str,
+    media_type: str = "image/jpeg",
+    notes: Optional[str] = None,
+    plano_id: str = "unknown",
+    few_shot_examples: Optional[List[List[Dict[str, Any]]]] = None,
+) -> PlanoAnalizado:
     """
     Analiza una imagen en base64 usando Claude 3.5 Sonnet y devuelve el modelo Pydantic PlanoAnalizado con los componentes.
     """
@@ -74,6 +100,8 @@ def analyze_plan(image_base64: str, media_type: str = "image/jpeg", notes: Optio
         )
 
     client = anthropic.Anthropic()
+
+    examples_block = _build_examples_section(few_shot_examples or [])
 
     prompt_content = f"""
 <instructions>
@@ -100,7 +128,7 @@ CRÍTICO: Los campos "material", "acabado" y "notas" deben ser MUY CORTOS (ver l
 No incluyas texto fuera del bloque <raw_reasoning> y el JSON en <output_format>.
 </instructions>
 
-<input_data>
+{examples_block}<input_data>
 Notas adicionales del cliente: {notes if notes else "Ninguna"}
 </input_data>
 """

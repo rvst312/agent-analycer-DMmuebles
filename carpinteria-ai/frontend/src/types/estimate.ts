@@ -6,6 +6,24 @@ export interface LineaPresupuesto {
   precio_pendiente: boolean;
 }
 
+export interface ComponenteArmario {
+  tipo: string;
+  material: string;
+  acabado: string;
+  ancho_cm: number;
+  largo_cm: number;
+  cantidad: number;
+  notas?: string;
+}
+
+export interface PlanoAnalizado {
+  plano_id: string;
+  componentes: ComponenteArmario[];
+  confidence_score: number;
+  raw_reasoning: string;
+  error?: string;
+}
+
 export interface PresupuestoConsolidado {
   cliente_id: string;
   plano_id: string;
@@ -32,7 +50,7 @@ export interface EstimateDetail {
   plano_id?: string;
   cliente_id?: string;
   image_url?: string;
-  plano_analizado?: Record<string, unknown>;
+  plano_analizado?: PlanoAnalizado;
   presupuesto_calculado?: Record<string, unknown>;
   presupuesto_consolidado?: PresupuestoConsolidado;
   motivo_rechazo?: string;
@@ -43,7 +61,7 @@ export interface EstimateDetail {
 export type SSEEvent =
   | { type: "current_state"; status: string; total: number; lineas: LineaPresupuesto[]; image_url?: string }
   | { type: "line_added"; linea: LineaPresupuesto }
-  | { type: "node_complete"; node: string; status?: string; plano_analizado?: unknown; presupuesto_calculado?: { lineas: LineaPresupuesto[] }; presupuesto_consolidado?: PresupuestoConsolidado; error?: string }
+  | { type: "node_complete"; node: string; status?: string; plano_analizado?: PlanoAnalizado; presupuesto_calculado?: { lineas: LineaPresupuesto[] }; presupuesto_consolidado?: PresupuestoConsolidado; error?: string }
   | { type: "workflow_paused"; status: string }
   | { type: "error"; error: string }
   | { type: "done" };

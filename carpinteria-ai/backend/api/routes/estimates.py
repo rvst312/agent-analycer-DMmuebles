@@ -287,6 +287,45 @@ async def delete_estimate(estimate_id: str):
         )
 
 
+@router.post("/{estimate_id}/learn-components", status_code=status.HTTP_200_OK)
+async def save_component_corrections(estimate_id: str, body: dict):
+    """Store corrected component data as training feedback for the vision agent."""
+    from db.models import ComponentFeedbackModel
+
+    componentes_originales = body.get("componentes_originales", [])
+    componentes_corregidos = body.get("componentes_corregidos", [])
+
+    if not componentes_corregidos:
+        raise HTTPException(status_code=400, detail="componentes_corregidos is required")
+
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(PresupuestoModel).where(PresupuestoModel.plano_id == estimate_id)
+            )
+            record = result.scalars().first()
+            if not record:
+                raise HTTPException(status_code=404, detail=f"Estimate {estimate_id} not found")
+
+            feedback = ComponentFeedbackModel(
+                plano_id=estimate_id,
+                cliente_id=record.cliente_id,
+                componentes_originales=componentes_originales,
+                componentes_corregidos=componentes_corregidos,
+            )
+            session.add(feedback)
+            await session.commit()
+
+        logger.info(f"Component corrections saved for {estimate_id}: {len(componentes_corregidos)} components")
+        return {"saved": True, "count": len(componentes_corregidos)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving component corrections for {estimate_id}: {e}")
+        raise HTTPException(status_code=500, detail="Error saving component corrections")
+
+
 @router.get("/{estimate_id}", status_code=status.HTTP_200_OK)
 async def get_estimate_status(estimate_id: str):
     """
