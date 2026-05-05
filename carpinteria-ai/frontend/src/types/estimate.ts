@@ -1,4 +1,6 @@
 export interface LineaPresupuesto {
+  codigo?: string;   // identificador interno generado (TAB-001, PTA-002…)
+  ref?: string;      // código de referencia del plano — clave de agrupación
   descripcion: string;
   cantidad: number;
   precio_unitario: number;
@@ -14,6 +16,7 @@ export interface ComponenteArmario {
   largo_cm: number;
   cantidad: number;
   notas?: string;
+  ref?: string;      // código de referencia visible en el plano
 }
 
 export interface PlanoAnalizado {

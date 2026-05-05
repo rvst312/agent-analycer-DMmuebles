@@ -23,6 +23,7 @@ class ComponenteArmario(BaseModel):
     largo_cm: float = Field(..., ge=0)
     cantidad: int = Field(..., gt=0)
     notas: Optional[str] = None
+    ref: Optional[str] = None  # código de referencia visible en el plano
 
 class PlanoAnalizado(BaseModel):
     plano_id: str
@@ -32,6 +33,8 @@ class PlanoAnalizado(BaseModel):
     error: Optional[str] = None
 
 class LineaPresupuesto(BaseModel):
+    codigo: str = ""       # identificador interno generado (TAB-001, PTA-002…)
+    ref: Optional[str] = None  # código de referencia del plano — clave de agrupación
     descripcion: str
     cantidad: int
     precio_unitario: float
