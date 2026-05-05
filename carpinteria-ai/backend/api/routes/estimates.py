@@ -1,4 +1,5 @@
 import asyncio
+import glob
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ from db.models import PresupuestoModel
 from db.persistence import async_session_maker, get_checkpointer
 from fastapi import (APIRouter, BackgroundTasks, File, Form, HTTPException,
                      UploadFile, status)
+from typing import List
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
@@ -22,6 +24,19 @@ ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "application/pdf"}
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/app/uploads")
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def _all_image_urls(estimate_id: str, archivos_paths: list | None = None) -> list[str]:
+    """Return sorted /uploads URLs for all files belonging to this estimate."""
+    if archivos_paths:
+        return [f"/uploads/{os.path.basename(p)}" for p in archivos_paths]
+    # Fallback: scan UPLOAD_DIR for files named {estimate_id}_N.ext
+    def _sort_key(p: str) -> int:
+        stem = os.path.splitext(os.path.basename(p))[0]
+        idx = stem.rsplit("_", 1)[-1]
+        return int(idx) if idx.isdigit() else 999
+    files = sorted(glob.glob(os.path.join(UPLOAD_DIR, f"{estimate_id}_*")), key=_sort_key)
+    return [f"/uploads/{os.path.basename(f)}" for f in files]
 
 
 async def _db_set_error(estimate_id: str, error_msg: str) -> None:
@@ -40,7 +55,7 @@ async def _db_set_error(estimate_id: str, error_msg: str) -> None:
         logger.error(f"Error actualizando estado a 'error' en DB para {estimate_id}: {e}")
 
 
-async def process_estimate(estimate_id: str, file_path: str, cliente_id: str, content_type: str):
+async def process_estimate(estimate_id: str, file_paths: List[str], cliente_id: str, content_types: List[str]):
     """Run the graph in background, streaming SSE events as each node completes."""
     logger.info(f"Iniciando procesamiento en background para estimate_id: {estimate_id}")
     try:
@@ -50,11 +65,13 @@ async def process_estimate(estimate_id: str, file_path: str, cliente_id: str, co
 
             config = {"configurable": {"thread_id": estimate_id}}
             initial_state = {
-                "archivo_path": file_path,
+                "archivo_path": file_paths[0],
+                "archivos_paths": file_paths,
+                "archivos_content_types": content_types,
                 "cliente_id": cliente_id,
                 "status": "pending",
                 "thread_id": estimate_id,
-                "content_type": content_type,
+                "content_type": content_types[0],
             }
 
             async for chunk in graph_with_cp.astream(initial_state, config=config):
@@ -116,35 +133,44 @@ async def process_estimate(estimate_id: str, file_path: str, cliente_id: str, co
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def create_estimate(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+    files: List[UploadFile] = File(...),
     cliente_id: str = Form(...)
 ):
-    if file.content_type not in ALLOWED_MIME_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Tipo de archivo no permitido: {file.content_type}. Solo se permite PNG, JPEG o PDF."
-        )
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Se requiere al menos un archivo.")
+
+    for f in files:
+        if f.content_type not in ALLOWED_MIME_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Tipo no permitido: {f.content_type}. Solo PNG, JPEG o PDF."
+            )
 
     estimate_id = str(uuid.uuid4())
-    extension = file.filename.split('.')[-1] if '.' in file.filename else ''
-    filename = f"{estimate_id}.{extension}" if extension else estimate_id
-    file_path = os.path.join(UPLOAD_DIR, filename)
+    file_paths: List[str] = []
+    content_types: List[str] = []
 
     try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        for i, f in enumerate(files):
+            extension = f.filename.split('.')[-1] if f.filename and '.' in f.filename else ''
+            filename = f"{estimate_id}_{i}.{extension}" if extension else f"{estimate_id}_{i}"
+            file_path = os.path.join(UPLOAD_DIR, filename)
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(f.file, buffer)
+            file_paths.append(file_path)
+            content_types.append(f.content_type or "image/jpeg")
     except Exception as e:
-        logger.error(f"Error guardando el archivo: {e}")
-        raise HTTPException(status_code=500, detail="Error al guardar el archivo subido.")
+        logger.error(f"Error guardando archivos: {e}")
+        raise HTTPException(status_code=500, detail="Error al guardar los archivos subidos.")
 
-    # Register in DB immediately so it appears on the dashboard straight away
+    # Register in DB (primary image = first file)
     try:
         async with async_session_maker() as session:
             record = PresupuestoModel(
                 id=estimate_id,
                 cliente_id=cliente_id,
                 plano_id=estimate_id,
-                image_path=file_path,
+                image_path=file_paths[0],
                 status="processing",
                 lineas=[],
                 lineas_pendientes=[],
@@ -154,12 +180,10 @@ async def create_estimate(
     except Exception as e:
         logger.error(f"Error registrando estimate en DB: {e}")
 
-    # Mark as active BEFORE adding the background task so SSE subscribers
-    # don't miss the window between task registration and task execution.
     start(estimate_id)
-    background_tasks.add_task(process_estimate, estimate_id, file_path, cliente_id, file.content_type)
+    background_tasks.add_task(process_estimate, estimate_id, file_paths, cliente_id, content_types)
 
-    return {"estimate_id": estimate_id, "status": "processing"}
+    return {"estimate_id": estimate_id, "status": "processing", "num_files": len(file_paths)}
 
 
 @router.get("/{estimate_id}/stream")
@@ -186,7 +210,8 @@ async def stream_estimate_events(estimate_id: str):
                     f"/uploads/{os.path.basename(record.image_path)}"
                     if record.image_path else None
                 )
-                yield f"data: {json.dumps({'type': 'current_state', 'status': record.status, 'total': record.total, 'lineas': record.lineas or [], 'image_url': image_url})}\n\n"
+                image_urls = _all_image_urls(estimate_id)
+                yield f"data: {json.dumps({'type': 'current_state', 'status': record.status, 'total': record.total, 'lineas': record.lineas or [], 'image_url': image_url, 'image_urls': image_urls})}\n\n"
         except Exception as e:
             logger.error(f"SSE snapshot error for {estimate_id}: {e}")
 
@@ -371,15 +396,19 @@ async def get_estimate_status(estimate_id: str):
             elif not next_nodes and current_status not in ["error", "rejected"]:
                 current_status = "completed"
 
+            archivos_paths = state_values.get("archivos_paths") or (
+                [state_values["archivo_path"]] if state_values.get("archivo_path") else []
+            )
             response: dict = {
                 "estimate_id": estimate_id,
                 "status": current_status,
                 "plano_id": state_values.get("plano_id"),
                 "cliente_id": state_values.get("cliente_id"),
                 "image_url": (
-                    f"/uploads/{os.path.basename(state_values.get('archivo_path', ''))}"
-                    if state_values.get("archivo_path") else None
+                    f"/uploads/{os.path.basename(archivos_paths[0])}"
+                    if archivos_paths else None
                 ),
+                "image_urls": _all_image_urls(estimate_id, archivos_paths),
                 "plano_analizado": state_values.get("plano_analizado"),
                 "presupuesto_calculado": state_values.get("presupuesto_calculado"),
                 "presupuesto_consolidado": state_values.get("presupuesto_consolidado"),
@@ -403,6 +432,7 @@ async def get_estimate_status(estimate_id: str):
         "plano_id": db_record.plano_id,
         "cliente_id": db_record.cliente_id,
         "image_url": image_url,
+        "image_urls": _all_image_urls(estimate_id),
     }
     if db_record.lineas:
         response["presupuesto_consolidado"] = {

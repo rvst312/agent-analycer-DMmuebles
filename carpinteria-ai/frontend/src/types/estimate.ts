@@ -53,6 +53,7 @@ export interface EstimateDetail {
   plano_id?: string;
   cliente_id?: string;
   image_url?: string;
+  image_urls?: string[];
   plano_analizado?: PlanoAnalizado;
   presupuesto_calculado?: Record<string, unknown>;
   presupuesto_consolidado?: PresupuestoConsolidado;
@@ -62,7 +63,7 @@ export interface EstimateDetail {
 
 // SSE event shapes
 export type SSEEvent =
-  | { type: "current_state"; status: string; total: number; lineas: LineaPresupuesto[]; image_url?: string }
+  | { type: "current_state"; status: string; total: number; lineas: LineaPresupuesto[]; image_url?: string; image_urls?: string[] }
   | { type: "line_added"; linea: LineaPresupuesto }
   | { type: "node_complete"; node: string; status?: string; plano_analizado?: PlanoAnalizado; presupuesto_calculado?: { lineas: LineaPresupuesto[] }; presupuesto_consolidado?: PresupuestoConsolidado; error?: string }
   | { type: "workflow_paused"; status: string }

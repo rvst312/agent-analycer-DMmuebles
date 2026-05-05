@@ -2,18 +2,20 @@
 
 import React, { useState } from 'react';
 import { PrecioResponse } from '../types/knowledge';
-import { Loader2, Edit2, Check, X } from 'lucide-react';
+import { Loader2, Edit2, Check, X, Trash2 } from 'lucide-react';
 
 interface PriceTableProps {
   precios: PrecioResponse[];
   loading: boolean;
   onUpdatePrecio: (id: string, nuevoPrecio: number) => Promise<void>;
+  onDeletePrecio: (id: string) => Promise<void>;
 }
 
-export default function PriceTable({ precios, loading, onUpdatePrecio }: PriceTableProps) {
+export default function PriceTable({ precios, loading, onUpdatePrecio, onDeletePrecio }: PriceTableProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const handleEditClick = (precio: PrecioResponse) => {
     setEditingId(precio.id);
@@ -43,6 +45,19 @@ export default function PriceTable({ precios, loading, onUpdatePrecio }: PriceTa
     }
   };
 
+  const handleDeleteClick = async (id: string) => {
+    if (!confirm('¿Estás seguro de que quieres eliminar este precio?')) return;
+    
+    setDeletingId(id);
+    try {
+      await onDeletePrecio(id);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center p-8 border rounded-lg bg-white shadow-sm">
@@ -61,7 +76,7 @@ export default function PriceTable({ precios, loading, onUpdatePrecio }: PriceTa
             <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Precio Unitario</th>
             <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Unidad</th>
             <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Categoría</th>
-            <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Versión</th>
+            <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200">
@@ -128,7 +143,14 @@ export default function PriceTable({ precios, loading, onUpdatePrecio }: PriceTa
                   {precio.metadatos.categoria}
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-500">
-                  v{precio.metadatos.version}
+                  <button
+                    onClick={() => handleDeleteClick(precio.id)}
+                    disabled={deletingId === precio.id}
+                    className="text-red-500 hover:text-red-700 transition-colors"
+                    title="Eliminar"
+                  >
+                    {deletingId === precio.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  </button>
                 </td>
               </tr>
             ))

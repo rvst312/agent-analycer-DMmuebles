@@ -11,10 +11,21 @@ async function getAdminToken(): Promise<string> {
 }
 
 export const knowledgeApi = {
-  getPrecios: async (skip = 0, limit = 100, activosOnly = false): Promise<PrecioResponse[]> => {
+  getPrecios: async (skip = 0, limit = 100, activosOnly = false, search?: string, categoria?: string): Promise<PrecioResponse[]> => {
     const token = await getAdminToken();
+    const params: any = { skip, limit, activos_only: activosOnly };
+    if (search) params.search = search;
+    if (categoria) params.categoria = categoria;
     const response = await apiClient.get('/knowledge', {
-      params: { skip, limit, activos_only: activosOnly },
+      params,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  createPrecio: async (precio: any): Promise<{ status: string; message: string }> => {
+    const token = await getAdminToken();
+    const response = await apiClient.post('/knowledge', precio, {
       headers: { Authorization: `Bearer ${token}` },
     });
     return response.data;

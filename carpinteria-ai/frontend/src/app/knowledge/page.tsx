@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import PriceTable from '@/components/PriceTable';
+import AddPriceModal from '@/components/AddPriceModal';
 import { knowledgeApi } from '@/lib/knowledge-api';
 import { PrecioResponse } from '@/types/knowledge';
 import { toast } from 'sonner';
-import { Upload, Loader2, Search, Filter, Download } from 'lucide-react';
+import { Upload, Loader2, Search, Filter, Download, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 type ApiError = { response?: { data?: { detail?: unknown } } };
@@ -23,10 +24,13 @@ function extractErrorMessage(err: unknown, fallback: string): string {
 export default function KnowledgePage() {
   const [precios, setPrecios] = useState<PrecioResponse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   
   // Filtros
-  const [clienteFilter, setClienteFilter] = useState('');
+  const [searchFilter, setSearchFilter] = useState('');
   const [categoriaFilter, setCategoriaFilter] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [debouncedCategoria, setDebouncedCategoria] = useState('');
   
   // Importación
   const [isImporting, setIsImporting] = useState(false);
@@ -36,14 +40,29 @@ export default function KnowledgePage() {
   const [skip, setSkip] = useState(0);
   const limit = 50;
 
-  const fetchPrecios = async (currentSkip: number) => {
+  // Debounce filtros
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchFilter);
+      setDebouncedCategoria(categoriaFilter);
+      setSkip(0); // resetear paginación al filtrar
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchFilter, categoriaFilter]);
+
+  const fetchPrecios = useCallback(async (currentSkip: number, search: string, categoria: string) => {
     try {
       setLoading(true);
-      const data = await knowledgeApi.getPrecios(currentSkip, limit, true);
+      const data = await knowledgeApi.getPrecios(currentSkip, limit, true, search, categoria);
       if (currentSkip === 0) {
         setPrecios(data);
       } else {
-        setPrecios(prev => [...prev, ...data]);
+        setPrecios(prev => {
+          // Avoid duplicates when quickly double clicking "load more"
+          const existingIds = new Set(prev.map(p => p.id));
+          const newData = data.filter(p => !existingIds.has(p.id));
+          return [...prev, ...newData];
+        });
       }
     } catch (err) {
       console.error(err);
@@ -51,11 +70,11 @@ export default function KnowledgePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchPrecios(skip);
-  }, [skip]);
+    fetchPrecios(skip, debouncedSearch, debouncedCategoria);
+  }, [skip, debouncedSearch, debouncedCategoria, fetchPrecios]);
 
   const handleUpdatePrecio = async (id: string, nuevoPrecio: number) => {
     try {
@@ -69,6 +88,31 @@ export default function KnowledgePage() {
     } catch (err) {
       console.error(err);
       toast.error(extractErrorMessage(err, 'Error al actualizar el precio'));
+      throw err;
+    }
+  };
+
+  const handleAddPrecio = async (nuevoPrecio: any) => {
+    try {
+      await knowledgeApi.createPrecio(nuevoPrecio);
+      toast.success('Precio añadido correctamente');
+      setSkip(0);
+      await fetchPrecios(0, debouncedSearch, debouncedCategoria);
+    } catch (err) {
+      console.error(err);
+      toast.error(extractErrorMessage(err, 'Error al añadir el precio'));
+      throw err;
+    }
+  };
+
+  const handleDeletePrecio = async (id: string) => {
+    try {
+      await knowledgeApi.deletePrecio(id);
+      toast.success('Precio eliminado correctamente');
+      setPrecios(prev => prev.filter(p => p.id !== id));
+    } catch (err) {
+      console.error(err);
+      toast.error(extractErrorMessage(err, 'Error al eliminar el precio'));
       throw err;
     }
   };
@@ -106,23 +150,15 @@ export default function KnowledgePage() {
     fileInputRef.current?.click();
   };
 
-  // Aplicar filtros en el cliente (ya que el endpoint no tiene parámetros de filtro actualmente,
-  // y solo trae los primeros 100 por defecto. Para un caso real, deberíamos implementar filtros en backend)
-  const preciosFiltrados = precios.filter(p => {
-    const matchCliente = p.metadatos.cliente.toLowerCase().includes(clienteFilter.toLowerCase());
-    const matchCategoria = p.metadatos.categoria.toLowerCase().includes(categoriaFilter.toLowerCase());
-    return matchCliente && matchCategoria;
-  });
-
   const handleExportCSV = () => {
-    if (preciosFiltrados.length === 0) {
+    if (precios.length === 0) {
       toast.warning('No hay datos para exportar');
       return;
     }
 
     const headers = ['ID', 'Material', 'Categoría', 'Cliente', 'Precio Unitario', 'Unidad'];
     
-    const rows = preciosFiltrados.map(p => [
+    const rows = precios.map(p => [
       p.id,
       `"${p.metadatos.material.replace(/"/g, '""')}"`,
       `"${p.metadatos.categoria.replace(/"/g, '""')}"`,
@@ -154,6 +190,14 @@ export default function KnowledgePage() {
         </div>
         
         <div className="flex items-center gap-3">
+          <Button 
+            variant="outline"
+            onClick={() => setIsAddModalOpen(true)} 
+            className="flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            Añadir Manual
+          </Button>
           <Button 
             variant="outline"
             onClick={handleExportCSV} 
@@ -201,28 +245,34 @@ export default function KnowledgePage() {
           <Search className="w-4 h-4 text-gray-400" />
           <input 
             type="text" 
-            placeholder="Filtrar por cliente..." 
+            placeholder="Buscar por nombre / material..." 
             className="flex-1 outline-none text-sm"
-            value={clienteFilter}
-            onChange={(e) => setClienteFilter(e.target.value)}
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
           />
         </div>
         <div className="flex-1 flex items-center gap-2 border rounded-md px-3 py-2 focus-within:ring-2 focus-within:ring-blue-500">
           <Filter className="w-4 h-4 text-gray-400" />
-          <input 
-            type="text" 
-            placeholder="Filtrar por categoría..." 
-            className="flex-1 outline-none text-sm"
+          <select 
+            className="flex-1 outline-none text-sm bg-transparent"
             value={categoriaFilter}
             onChange={(e) => setCategoriaFilter(e.target.value)}
-          />
+          >
+            <option value="">Todas las categorías</option>
+            <option value="materia_prima">Materia Prima</option>
+            <option value="herrajes">Herrajes</option>
+            <option value="acabados">Acabados</option>
+            <option value="mano_obra">Mano de Obra</option>
+            <option value="otros">Otros</option>
+          </select>
         </div>
       </div>
 
       <PriceTable 
-        precios={preciosFiltrados} 
+        precios={precios} 
         loading={loading && skip === 0} 
         onUpdatePrecio={handleUpdatePrecio} 
+        onDeletePrecio={handleDeletePrecio}
       />
       
       {!loading && precios.length > 0 && precios.length % limit === 0 && (
@@ -238,11 +288,17 @@ export default function KnowledgePage() {
         </div>
       )}
 
-      {!loading && precios.length > 0 && preciosFiltrados.length === 0 && (
+      {!loading && precios.length === 0 && (
         <div className="text-center py-8 text-gray-500">
           No hay resultados que coincidan con los filtros actuales.
         </div>
       )}
+
+      <AddPriceModal 
+        isOpen={isAddModalOpen} 
+        onClose={() => setIsAddModalOpen(false)} 
+        onAdd={handleAddPrecio} 
+      />
     </div>
   );
 }

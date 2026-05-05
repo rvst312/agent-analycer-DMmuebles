@@ -26,13 +26,21 @@ router = APIRouter(
 def get_knowledge(
     skip: int = Query(0, ge=0, description="Número de resultados a saltar"),
     limit: int = Query(10, ge=1, le=100, description="Número máximo de resultados"),
-    activos_only: bool = Query(False, description="Si es True, devuelve solo precios activos")
+    activos_only: bool = Query(False, description="Si es True, devuelve solo precios activos"),
+    search: str = Query(None, description="Búsqueda por texto en el documento"),
+    categoria: str = Query(None, description="Filtrar por categoría")
 ):
     """
-    Lista todos los precios con paginación.
+    Lista todos los precios con paginación y filtros opcionales.
     """
     try:
-        precios = get_precios(skip=skip, limit=limit, activos_only=activos_only)
+        precios = get_precios(
+            skip=skip, 
+            limit=limit, 
+            activos_only=activos_only, 
+            search=search, 
+            categoria=categoria
+        )
         return precios
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -72,11 +80,12 @@ def update_knowledge(precio_id: str, metadata_update: PrecioUpdate):
 @router.delete("/{precio_id}", response_model=dict)
 def delete_knowledge(precio_id: str):
     """
-    Realiza un borrado lógico marcando el precio como inactivo (activo=False).
+    Elimina físicamente el precio de ChromaDB.
     """
     try:
-        delete_precio_logico(precio_id)
-        return {"status": "success", "message": f"Precio {precio_id} marcado como inactivo"}
+        from rag.embeddings import delete_precio
+        delete_precio(precio_id)
+        return {"status": "success", "message": f"Precio {precio_id} eliminado correctamente"}
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:

@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 
 class GraphState(TypedDict):
     plano_id: Optional[str]
-    archivo_path: Optional[str]
+    archivo_path: Optional[str]                   # primer archivo (compatibilidad)
+    archivos_paths: Optional[list]                # todos los archivos subidos
+    archivos_content_types: Optional[list]        # content-type de cada archivo
     cliente_id: Optional[str]
     plano_analizado: Optional[Dict[str, Any]]
     presupuesto_consolidado: Optional[Dict[str, Any]]
@@ -62,47 +64,85 @@ def receive_input(state: GraphState):
     return {"status": "received"}
 
 
+def _resolve_media_type(file_path: str, hint: Optional[str]) -> str:
+    if hint and hint in {"image/jpeg", "image/png", "application/pdf"}:
+        return hint
+    fp = file_path.lower()
+    if fp.endswith(".png"):  return "image/png"
+    if fp.endswith(".pdf"):  return "application/pdf"
+    return "image/jpeg"
+
+
 async def vision_analysis(state: GraphState):
     logger.info("Node: vision_analysis")
-    file_path = state.get("archivo_path")
     plano_id = state.get("thread_id") or state.get("cliente_id", "unknown")
 
-    if not file_path:
-        return {"status": "error", "error": "No file_path provided", "plano_id": plano_id}
+    # Recopilar todos los archivos a analizar
+    file_paths: list = state.get("archivos_paths") or []
+    content_types: list = state.get("archivos_content_types") or []
+    if not file_paths:
+        single = state.get("archivo_path")
+        if not single:
+            return {"status": "error", "error": "No file_path provided", "plano_id": plano_id}
+        file_paths = [single]
+        content_types = [state.get("content_type", "image/jpeg")]
 
-    try:
-        with open(file_path, "rb") as f:
-            image_base64 = base64.b64encode(f.read()).decode("utf-8")
-
-        media_type = state.get("content_type")
-        if not media_type:
-            media_type = "image/jpeg"
-            if file_path.lower().endswith(".png"):
-                media_type = "image/png"
-            elif file_path.lower().endswith(".pdf"):
-                media_type = "application/pdf"
-    except Exception as e:
-        return {"status": "error", "error": f"Failed to read image file: {str(e)}"}
-
-    # Fetch few-shot examples from stored corrections for this client
     cliente_id = state.get("cliente_id", "unknown")
     few_shot_examples = await get_recent_corrections(cliente_id, n=3)
     if few_shot_examples:
-        logger.info(f"vision_analysis: injecting {len(few_shot_examples)} few-shot examples for cliente={cliente_id}")
+        logger.info(f"vision_analysis: {len(few_shot_examples)} few-shot examples para cliente={cliente_id}")
 
-    result = analyze_plan(
-        image_base64=image_base64,
-        media_type=media_type,
-        plano_id=plano_id,
-        few_shot_examples=few_shot_examples,
-    )
+    all_componentes: list = []
+    reasoning_parts: list = []
+    confidence_sum = 0.0
+    errors: list = []
 
-    if result.error:
-        import json as _json
-        return {"status": "error", "error": result.error, "plano_analizado": _json.loads(result.model_dump_json()), "plano_id": plano_id}
+    for idx, file_path in enumerate(file_paths):
+        media_type = _resolve_media_type(file_path, content_types[idx] if idx < len(content_types) else None)
+        try:
+            with open(file_path, "rb") as f:
+                image_base64 = base64.b64encode(f.read()).decode("utf-8")
+        except Exception as e:
+            errors.append(f"Archivo {idx+1}: {str(e)}")
+            continue
+
+        result = analyze_plan(
+            image_base64=image_base64,
+            media_type=media_type,
+            plano_id=plano_id,
+            few_shot_examples=few_shot_examples,
+        )
+
+        if result.error:
+            logger.warning(f"vision_analysis: error en archivo {idx+1}: {result.error}")
+            errors.append(f"Archivo {idx+1}: {result.error}")
+            continue
+
+        logger.info(f"vision_analysis: archivo {idx+1}/{len(file_paths)} → {len(result.componentes)} componentes detectados")
+        all_componentes.extend(result.componentes)
+        reasoning_parts.append(f"[Plano {idx+1}] {result.raw_reasoning}")
+        confidence_sum += result.confidence_score
+
+    if not all_componentes:
+        error_msg = "; ".join(errors) if errors else "No se detectaron componentes en ninguna imagen"
+        return {"status": "error", "error": error_msg, "plano_id": plano_id}
+
+    avg_confidence = confidence_sum / len(file_paths)
+    merged_reasoning = " | ".join(reasoning_parts)
 
     import json as _json
-    return {"status": "vision_analyzed", "plano_analizado": _json.loads(result.model_dump_json()), "plano_id": plano_id}
+    from api.schemas.estimate import PlanoAnalizado as _PA
+    merged = _PA(
+        plano_id=plano_id,
+        componentes=all_componentes,
+        confidence_score=round(avg_confidence, 3),
+        raw_reasoning=merged_reasoning,
+    )
+    return {
+        "status": "vision_analyzed",
+        "plano_analizado": _json.loads(merged.model_dump_json()),
+        "plano_id": plano_id,
+    }
 
 
 def extract_entities(state: GraphState):

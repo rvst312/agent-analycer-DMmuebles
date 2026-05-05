@@ -48,6 +48,7 @@ export default function EstimatePage() {
   const estimateId = params.id as string;
 
   const [estimate, setEstimate] = useState<EstimateDetail | null>(null);
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(true);
@@ -124,6 +125,8 @@ export default function EstimatePage() {
       setEstimate(data);
       setLoading(false);
 
+      if (data.image_urls?.length) setImageUrls(u => u.length >= (data.image_urls?.length ?? 0) ? u : (data.image_urls ?? u));
+
       if (data.plano_analizado?.componentes?.length) {
         setPlanoAnalizado(data.plano_analizado);
       }
@@ -159,10 +162,11 @@ export default function EstimatePage() {
           status: raw.status,
           image_url: raw.image_url ?? undefined,
         } as EstimateDetail));
-        if (raw.lineas?.length) { 
+        if (raw.image_urls?.length) setImageUrls(u => u.length >= raw.image_urls!.length ? u : raw.image_urls!);
+        if (raw.lineas?.length) {
           const ls = formatLineas(raw.lineas);
-          setLineas(ls); 
-          recalc(ls); 
+          setLineas(ls);
+          recalc(ls);
         }
         if (TERMINAL.has(raw.status)) setIsProcessing(false);
         return;
@@ -324,6 +328,7 @@ export default function EstimatePage() {
         {/* Left: plan + progress */}
         <div className="flex flex-col gap-4 sticky top-24">
           <PlanViewer
+            imageUrls={imageUrls.length ? imageUrls.map(u => `${BASE_URL}${u}`) : undefined}
             imageUrl={estimate?.image_url ? `${BASE_URL}${estimate.image_url}` : undefined}
           />
           {isProcessing && (

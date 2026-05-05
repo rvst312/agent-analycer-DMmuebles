@@ -51,16 +51,40 @@ def upsert_precio(id: str, texto: str, metadatos: dict) -> None:
         metadatas=[metadatos]
     )
 
-def get_precios(skip: int = 0, limit: int = 10, activos_only: bool = False) -> List[Dict[str, Any]]:
+def get_precios(skip: int = 0, limit: int = 10, activos_only: bool = False, search: Optional[str] = None, categoria: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Lista los precios con paginación. Opcionalmente filtra por activo=True.
+    Lista los precios con paginación. Opcionalmente filtra por activo=True, búsqueda por texto y categoría.
     """
-    where_clause = {"activo": True} if activos_only else None
-    results = precios_collection.get(
-        limit=limit,
-        offset=skip,
-        where=where_clause
-    )
+    where_clause = {}
+    conditions = []
+    
+    if activos_only:
+        conditions.append({"activo": True})
+    
+    if categoria:
+        conditions.append({"categoria": categoria})
+        
+    if conditions:
+        if len(conditions) == 1:
+            where_clause = conditions[0]
+        else:
+            where_clause = {"$and": conditions}
+    else:
+        where_clause = None
+
+    where_document = {"$contains": search} if search else None
+
+    # ChromaDB get
+    kwargs = {
+        "limit": limit,
+        "offset": skip,
+    }
+    if where_clause:
+        kwargs["where"] = where_clause
+    if where_document:
+        kwargs["where_document"] = where_document
+
+    results = precios_collection.get(**kwargs)
     
     formatted_results = []
     if results and results.get("ids"):
@@ -98,6 +122,12 @@ def update_precio_metadata(id: str, metadatos_update: dict) -> None:
         ids=[id],
         metadatas=[current_metadata]
     )
+
+def delete_precio(id: str) -> None:
+    """
+    Elimina físicamente un precio de ChromaDB.
+    """
+    precios_collection.delete(ids=[id])
 
 def delete_precio_logico(id: str) -> None:
     """
