@@ -15,6 +15,9 @@ export default function PlanViewer({ imageUrls, imageUrl }: PlanViewerProps) {
   const [index, setIndex] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [showMagnifier, setShowMagnifier] = useState(false);
+  const [[x, y], setXY] = useState([0, 0]);
+  const [[imgWidth, imgHeight], setSize] = useState([0, 0]);
 
   useEffect(() => {
     setMounted(true);
@@ -57,12 +60,56 @@ export default function PlanViewer({ imageUrls, imageUrl }: PlanViewerProps) {
 
       <div className="relative bg-gray-50 border rounded overflow-hidden">
         {current ? (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img
-            src={current}
-            alt={`Plano ${index + 1}`}
-            className="w-full h-auto object-contain"
-          />
+          <div
+            className="relative cursor-crosshair"
+            onMouseEnter={(e) => {
+              const elem = e.currentTarget;
+              const { width, height } = elem.getBoundingClientRect();
+              setSize([width, height]);
+              setShowMagnifier(true);
+            }}
+            onMouseMove={(e) => {
+              const elem = e.currentTarget;
+              const { top, left } = elem.getBoundingClientRect();
+              const x = e.clientX - left;
+              const y = e.clientY - top;
+              setXY([x, y]);
+            }}
+            onMouseLeave={() => {
+              setShowMagnifier(false);
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={current}
+              alt={`Plano ${index + 1}`}
+              className="w-full h-auto object-contain"
+            />
+            {showMagnifier && (
+              <div
+                style={{
+                  display: showMagnifier ? "" : "none",
+                  position: "absolute",
+                  pointerEvents: "none",
+                  height: `${200}px`,
+                  width: `${200}px`,
+                  top: `${y - 100}px`,
+                  left: `${x - 100}px`,
+                  opacity: 1,
+                  border: "2px solid white",
+                  borderRadius: "50%",
+                  backgroundColor: "white",
+                  backgroundImage: `url('${current}')`,
+                  backgroundRepeat: "no-repeat",
+                  backgroundSize: `${imgWidth * 1.5}px ${imgHeight * 1.5}px`,
+                  backgroundPositionX: `${-x * 1.5 + 100}px`,
+                  backgroundPositionY: `${-y * 1.5 + 100}px`,
+                  boxShadow: "0 4px 10px rgba(0,0,0,0.3)",
+                  zIndex: 20
+                }}
+              />
+            )}
+          </div>
         ) : (
           <div className="min-h-[300px] flex items-center justify-center">
             <p className="text-gray-500">Imagen no disponible</p>

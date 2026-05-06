@@ -60,6 +60,7 @@ export default function EstimatePage() {
   const [subtotal, setSubtotal] = useState(0);
   const [iva, setIva] = useState(0);
   const [total, setTotal] = useState(0);
+  const [groupDescriptions, setGroupDescriptions] = useState<Record<string, string>>({});
 
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -274,7 +275,7 @@ export default function EstimatePage() {
         body: JSON.stringify({
           thread_id: estimateId,
           action,
-          ajustes: { lineas, subtotal, iva, total },
+          ajustes: { lineas, subtotal, iva, total, descripciones_grupo: groupDescriptions },
           motivo: action === "reject" ? motivoRechazo : undefined,
         }),
       });
@@ -359,6 +360,7 @@ export default function EstimatePage() {
                 iva={iva}
                 total={total}
                 onChange={handleLineasChange}
+                onDescriptionsChange={setGroupDescriptions}
               />
             )}
           </div>

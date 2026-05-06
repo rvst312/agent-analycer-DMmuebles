@@ -13,6 +13,7 @@ services:
       - LANGGRAPH_ALLOW_MODULES=api.schemas.estimate
       - UPLOAD_DIR=/app/uploads
     volumes:
+      - ./backend:/app          # código fuente en vivo — cambios sin reconstruir
       - uploads_data:/app/uploads
     depends_on:
       - postgres

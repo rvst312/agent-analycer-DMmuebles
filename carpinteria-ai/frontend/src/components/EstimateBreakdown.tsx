@@ -10,6 +10,7 @@ interface EstimateBreakdownProps {
   iva: number;
   total: number;
   onChange: (newLineas: LineaPresupuesto[]) => void;
+  onDescriptionsChange?: (descriptions: Record<string, string>) => void;
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -99,7 +100,7 @@ const REF_COLORS = [
 
 // ── component ─────────────────────────────────────────────────────────────────
 
-export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChange }: EstimateBreakdownProps) {
+export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChange, onDescriptionsChange }: EstimateBreakdownProps) {
   const groups   = groupByRef(lineas);
   const refKeys  = Array.from(groups.keys());
 
@@ -109,6 +110,11 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
     for (const k of refKeys) d[k] = buildAutoDescription(k, groups.get(k)!.lineas);
     return d;
   });
+
+  // Notify parent whenever group descriptions change so they can be sent on approval
+  useEffect(() => {
+    onDescriptionsChange?.(descriptions);
+  }, [descriptions, onDescriptionsChange]);
 
   // Add auto-description for new ref keys that appear (e.g. during SSE streaming)
   useEffect(() => {
@@ -218,7 +224,10 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
                     className="w-full text-sm text-gray-700 bg-white border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none leading-relaxed"
                     rows={4}
                     value={desc}
-                    onChange={e => setDescriptions(prev => ({ ...prev, [refKey]: e.target.value }))}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setDescriptions(prev => ({ ...prev, [refKey]: val }));
+                    }}
                   />
                 </div>
 

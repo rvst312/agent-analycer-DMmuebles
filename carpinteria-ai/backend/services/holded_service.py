@@ -95,29 +95,68 @@ def get_or_create_contacto(nif: str, datos: ContactoSchema) -> Optional[str]:
         
     return crear_contacto(datos)
 
+def _agrupar_lineas_por_ref(presupuesto) -> list:
+    """
+    Agrupa las líneas por ref y devuelve una lista de items para Holded.
+    Cada ref → un único item: nombre=ref, desc=descripción comercial, subtotal=suma del grupo.
+    Las líneas pendientes de precio se excluyen del subtotal pero aparecen en la descripción.
+    """
+    from collections import defaultdict
+
+    grupos: dict = defaultdict(list)
+    for linea in presupuesto.lineas:
+        key = (linea.ref or "SIN-REF").strip()
+        grupos[key].append(linea)
+
+    descripciones_grupo: dict = getattr(presupuesto, "descripciones_grupo", None) or {}
+
+    items = []
+    for ref, lineas in grupos.items():
+        precio_grupo = sum(
+            l.subtotal for l in lineas if not l.precio_pendiente
+        )
+        desc = descripciones_grupo.get(ref) or _generar_descripcion(ref, lineas)
+        items.append({
+            "name": ref,
+            "desc": desc,
+            "units": 1,
+            "subtotal": round(precio_grupo, 2),
+            "tax": 21,
+        })
+
+    return items
+
+
+def _generar_descripcion(ref: str, lineas: list) -> str:
+    """Descripción de fallback cuando el frontend no envió una descripción de grupo."""
+    partes = [f"Módulo {ref} según plano."]
+    for l in lineas:
+        estado = " (precio pendiente)" if l.precio_pendiente else ""
+        partes.append(f"- {l.descripcion} × {l.cantidad}{estado}")
+    return "\n".join(partes)
+
+
 def crear_presupuesto(contact_id: str, presupuesto) -> Optional[str]:
     """
-    Crea un borrador de presupuesto en Holded.
+    Crea un borrador de presupuesto en Holded agrupado por referencia de plano.
+    Cada ref (A01, A02…) genera un único item; el desglose queda sólo en BD.
     Devuelve el ID del documento creado.
     """
     import time
     url = f"{HOLDED_API_URL}/documents/estimate"
-    
-    items = []
-    for linea in presupuesto.lineas:
-        items.append({
-            "name": linea.descripcion,
-            "units": linea.cantidad,
-            "subtotal": linea.subtotal,
-            "tax": 21
-        })
-        
+
+    items = _agrupar_lineas_por_ref(presupuesto)
+    logger.info(
+        f"Enviando a Holded {len(items)} grupo(s): "
+        + ", ".join(f"{i['name']}={i['subtotal']}€" for i in items)
+    )
+
     payload = {
         "contactId": contact_id,
         "date": int(time.time()),
-        "items": items
+        "items": items,
     }
-    
+
     try:
         response = requests.post(url, headers=get_headers(), json=payload, timeout=10)
         response.raise_for_status()

@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -55,3 +55,4 @@ class PresupuestoConsolidado(BaseModel):
     total: float
     lineas_pendientes: List[LineaPresupuesto]
     status: str = "pending_review"
+    descripciones_grupo: Optional[Dict[str, str]] = None  # ref → descripción comercial enviada a Holded

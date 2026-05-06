@@ -18,4 +18,4 @@ RUN python3 -c 'from chromadb.utils.embedding_functions import DefaultEmbeddingF
 
 COPY . .
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
