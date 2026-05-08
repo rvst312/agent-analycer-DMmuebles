@@ -123,7 +123,10 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
       const next = { ...prev };
       let changed = false;
       Array.from(g.entries()).forEach(([k, { lineas: gl }]) => {
-        if (!(k in next)) { next[k] = buildAutoDescription(k, gl); changed = true; }
+        if (next[k] === undefined) {
+          next[k] = buildAutoDescription(k, gl);
+          changed = true;
+        }
       });
       return changed ? next : prev;
     });
@@ -135,12 +138,17 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
     });
   }, [lineas]);
 
-  const toggleGroup = (ref: string) =>
+  const toggleGroup = (ref: string) => {
     setOpenGroups(prev => {
       const next = new Set(prev);
-      next.has(ref) ? next.delete(ref) : next.add(ref);
+      if (next.has(ref)) {
+        next.delete(ref);
+      } else {
+        next.add(ref);
+      }
       return next;
     });
+  };
 
   const handleLineChange = (index: number, field: keyof LineaPresupuesto, value: number | string) => {
     const newLineas = [...lineas];
@@ -164,7 +172,9 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
       )}
 
       {refKeys.map((refKey, groupIdx) => {
-        const { lineas: groupLineas, indices } = groups.get(refKey)!;
+        const groupData = groups.get(refKey);
+        if (!groupData) return null;
+        const { lineas: groupLineas, indices } = groupData;
         const grpSubtotal  = groupSubtotal(groupLineas);
         const pendingCount = groupLineas.filter(l => l.precio_pendiente).length;
         const color        = REF_COLORS[groupIdx % REF_COLORS.length];

@@ -92,7 +92,7 @@ export default function KnowledgePage() {
     }
   };
 
-  const handleAddPrecio = async (nuevoPrecio: any) => {
+  const handleAddPrecio = async (nuevoPrecio: Omit<PrecioResponse, 'id'>) => {
     try {
       await knowledgeApi.createPrecio(nuevoPrecio);
       toast.success('Precio añadido correctamente');
@@ -134,7 +134,7 @@ export default function KnowledgePage() {
       
       // Recargar datos
       setSkip(0);
-      await fetchPrecios(0);
+      await fetchPrecios(0, debouncedSearch, debouncedCategoria);
     } catch (err) {
       console.error(err);
       toast.error(extractErrorMessage(err, 'Error al importar el archivo CSV'));

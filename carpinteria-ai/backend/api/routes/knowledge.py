@@ -52,8 +52,9 @@ def create_knowledge(precio: PrecioCreate):
     Valida que los metadatos requeridos estén presentes.
     """
     try:
-        upsert_precio(id=precio.id, texto=precio.texto, metadatos=precio.metadatos)
-        return {"status": "success", "message": f"Precio {precio.id} insertado correctamente"}
+        precio_id = precio.resolved_id()
+        upsert_precio(id=precio_id, texto=precio.documento, metadatos=precio.metadatos)
+        return {"status": "success", "message": f"Precio {precio_id} insertado correctamente"}
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:

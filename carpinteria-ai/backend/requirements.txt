@@ -1,5 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard]
 langgraph
 langchain-anthropic
 chromadb
@@ -8,7 +8,7 @@ pydantic
 python-dotenv
 pytest
 httpx
-sqlalchemy
+sqlalchemy[asyncio]
 langgraph-checkpoint
 langgraph-checkpoint-postgres
 langgraph-checkpoint-sqlite
@@ -16,3 +16,4 @@ psycopg[binary]
 psycopg-pool
 python-multipart
 pyjwt
+aiosqlite

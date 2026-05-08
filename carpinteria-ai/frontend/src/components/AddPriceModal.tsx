@@ -3,10 +3,12 @@ import { Loader2, Plus, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from 'sonner';
 
+import { PrecioResponse } from '@/types/knowledge';
+
 interface AddPriceModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAdd: (precio: any) => Promise<void>;
+  onAdd: (precio: Omit<PrecioResponse, 'id'>) => Promise<void>;
 }
 
 export default function AddPriceModal({ isOpen, onClose, onAdd }: AddPriceModalProps) {
@@ -41,10 +43,8 @@ export default function AddPriceModal({ isOpen, onClose, onAdd }: AddPriceModalP
 
     setLoading(true);
     try {
-      const id = `manual_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      const payload = {
-        id,
-        texto: `${formData.material} para ${formData.categoria}`,
+      const payload: Omit<PrecioResponse, 'id'> = {
+        documento: `${formData.material} para ${formData.categoria}`,
         metadatos: {
           ...formData,
           precio_unitario: numValue,

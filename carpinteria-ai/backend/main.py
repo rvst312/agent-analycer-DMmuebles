@@ -54,9 +54,14 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # Configuración de CORS
+# Configura CORS_ORIGINS como lista separada por comas en producción, p.ej:
+# CORS_ORIGINS=https://tu-frontend.up.railway.app,https://otro-dominio.com
+_cors_env = os.environ.get("CORS_ORIGINS", "*")
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En producción, se deben especificar los dominios permitidos (ej. frontend en localhost:3000)
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
