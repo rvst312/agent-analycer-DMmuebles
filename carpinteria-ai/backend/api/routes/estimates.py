@@ -78,6 +78,11 @@ async def process_estimate(estimate_id: str, file_paths: List[str], cliente_id: 
                 node_name = list(chunk.keys())[0]
                 node_update = chunk[node_name]
 
+                # LangGraph emits {"__interrupt__": (Interrupt(...),)} as a tuple when
+                # interrupt() fires — skip it here; the pause is handled below via aget_state.
+                if node_name == "__interrupt__" or not isinstance(node_update, dict):
+                    continue
+
                 event: dict = {
                     "type": "node_complete",
                     "node": node_name,
