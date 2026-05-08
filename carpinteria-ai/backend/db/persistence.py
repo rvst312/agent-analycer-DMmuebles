@@ -16,6 +16,7 @@ POSTGRES_URL = os.getenv("POSTGRES_URL")
 
 # --- Configuración de SQLAlchemy ---
 if POSTGRES_URL:
+    logger.info("DB: usando PostgreSQL (POSTGRES_URL definida)")
     db_url = POSTGRES_URL
     if db_url.startswith("postgresql://"):
         db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
@@ -30,6 +31,7 @@ if POSTGRES_URL:
         pool_recycle=300,    # refresh connections every 5 min
     )
 else:
+    logger.info("DB: usando SQLite local (POSTGRES_URL no definida)")
     engine = create_async_engine("sqlite+aiosqlite:///./local_dev.db", echo=False)
 
 async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
