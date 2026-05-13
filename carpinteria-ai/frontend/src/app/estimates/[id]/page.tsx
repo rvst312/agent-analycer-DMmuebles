@@ -102,6 +102,12 @@ export default function EstimatePage() {
 
   const handleLineasChange = (nl: LineaPresupuesto[]) => { setLineas(nl); recalc(nl); };
 
+  const handleDiscountsChange = ({ subtotal: s, iva: i, total: t }: { subtotal: number; iva: number; total: number }) => {
+    setSubtotal(s);
+    setIva(i);
+    setTotal(t);
+  };
+
   const handleSavePriceFeedback = async (corrections: PriceCorrection[]) => {
     if (!corrections.length) return;
     setIsSavingFeedback(true);
@@ -392,6 +398,7 @@ export default function EstimatePage() {
                 originalLineas={originalLineas}
                 onSavePriceFeedback={handleSavePriceFeedback}
                 isSavingFeedback={isSavingFeedback}
+                onDiscountsChange={handleDiscountsChange}
               />
             )}
           </div>

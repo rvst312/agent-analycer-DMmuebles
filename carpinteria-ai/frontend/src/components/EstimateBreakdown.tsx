@@ -1,8 +1,8 @@
 "use client";
 
 import { LineaPresupuesto, PriceCorrection } from '@/types/estimate';
-import { ChevronDown, ChevronUp, BrainCircuit, CheckCircle2 } from 'lucide-react';
-import React, { useEffect, useRef, useState } from 'react';
+import { ChevronDown, ChevronUp, BrainCircuit, CheckCircle2, Tag } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 interface EstimateBreakdownProps {
   lineas: LineaPresupuesto[];
@@ -14,7 +14,10 @@ interface EstimateBreakdownProps {
   originalLineas?: LineaPresupuesto[];
   onSavePriceFeedback?: (corrections: PriceCorrection[]) => void;
   isSavingFeedback?: boolean;
+  onDiscountsChange?: (totals: { subtotal: number; iva: number; total: number }) => void;
 }
+
+const PRESET_DISCOUNTS = [5, 10, 15, 20, 25];
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -103,9 +106,35 @@ const REF_COLORS = [
 
 // ── component ─────────────────────────────────────────────────────────────────
 
-export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChange, onDescriptionsChange, originalLineas, onSavePriceFeedback, isSavingFeedback }: EstimateBreakdownProps) {
+export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChange, onDescriptionsChange, originalLineas, onSavePriceFeedback, isSavingFeedback, onDiscountsChange }: EstimateBreakdownProps) {
   const groups   = groupByRef(lineas);
   const refKeys  = Array.from(groups.keys());
+
+  // ── descuentos por módulo ─────────────────────────────────────────────────
+  // key = refKey, value = porcentaje (0-100); undefined = sin descuento activo
+  const [groupDiscounts, setGroupDiscounts] = useState<Record<string, number>>({});
+
+  const getEffectiveSubtotal = (refKey: string, raw: number): number => {
+    const pct = groupDiscounts[refKey];
+    return pct ? Number((raw * (1 - pct / 100)).toFixed(2)) : raw;
+  };
+
+  const effectiveSubtotal = useMemo(() => {
+    const g = groupByRef(lineas);
+    return Number(Array.from(g.entries()).reduce((sum, [ref, { lineas: gl }]) => {
+      const raw = groupSubtotal(gl);
+      const pct = groupDiscounts[ref];
+      return sum + (pct ? raw * (1 - pct / 100) : raw);
+    }, 0).toFixed(2));
+  }, [lineas, groupDiscounts]);
+
+  const effectiveIva = Number((effectiveSubtotal * 0.21).toFixed(2));
+  const effectiveTotal = Number((effectiveSubtotal + effectiveIva).toFixed(2));
+
+  useEffect(() => {
+    onDiscountsChange?.({ subtotal: effectiveSubtotal, iva: effectiveIva, total: effectiveTotal });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveSubtotal]);
 
   const [openGroups, setOpenGroups]   = useState<Set<string>>(() => new Set(refKeys));
   const [descriptions, setDescriptions] = useState<Record<string, string>>(() => {
@@ -244,8 +273,14 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
               </div>
 
               <div className="flex items-center gap-3 shrink-0">
+                {groupDiscounts[refKey] !== undefined && (
+                  <div className="flex items-center gap-1 text-white/80">
+                    <Tag className="w-3 h-3" />
+                    <span className="text-xs font-semibold">−{groupDiscounts[refKey]}%</span>
+                  </div>
+                )}
                 <span className="text-white font-bold tabular-nums text-sm">
-                  {grpSubtotal.toFixed(2)} €
+                  {getEffectiveSubtotal(refKey, grpSubtotal).toFixed(2)} €
                 </span>
                 {isOpen
                   ? <ChevronUp  className="w-4 h-4 text-white/80" />
@@ -356,19 +391,93 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
                   </table>
                 </div>
 
-                {/* pie del grupo */}
-                <div className="bg-gray-50 border-t border-gray-200 px-4 py-2 flex justify-between items-center text-sm">
-                  <span className="text-gray-400 text-xs font-mono">{refKey}</span>
-                  <div className="flex items-center gap-2">
-                    {pendingCount > 0 && (
-                      <span className="text-xs text-yellow-600">
-                        (sin {pendingCount} pendiente{pendingCount > 1 ? 's' : ''})
-                      </span>
+                {/* pie del grupo: descuento + total */}
+                <div className="bg-gray-50 border-t border-gray-200 divide-y divide-dashed divide-gray-200">
+
+                  {/* fila de control de descuento */}
+                  <div className="px-4 py-2.5 flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none text-xs font-medium text-gray-600">
+                      <input
+                        type="checkbox"
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        checked={groupDiscounts[refKey] !== undefined}
+                        onChange={(e) => {
+                          setGroupDiscounts(prev => {
+                            const n = { ...prev };
+                            if (e.target.checked) n[refKey] = 10;
+                            else delete n[refKey];
+                            return n;
+                          });
+                        }}
+                      />
+                      Aplicar descuento
+                    </label>
+
+                    {groupDiscounts[refKey] !== undefined && (
+                      <>
+                        <div className="flex items-center gap-1">
+                          {PRESET_DISCOUNTS.map(pct => (
+                            <button
+                              key={pct}
+                              type="button"
+                              onClick={() => setGroupDiscounts(prev => ({ ...prev, [refKey]: pct }))}
+                              className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                                groupDiscounts[refKey] === pct
+                                  ? 'bg-blue-600 text-white border-blue-600'
+                                  : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                              }`}
+                            >
+                              {pct}%
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.5"
+                            className="w-16 text-xs border border-gray-300 rounded px-1.5 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            value={groupDiscounts[refKey]}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value);
+                              if (!isNaN(v) && v >= 0 && v <= 100) {
+                                setGroupDiscounts(prev => ({ ...prev, [refKey]: v }));
+                              }
+                            }}
+                          />
+                          <span className="text-xs text-gray-400">%</span>
+                        </div>
+                      </>
                     )}
-                    <span className="text-gray-500">Total:</span>
-                    <span className="font-bold text-gray-900 tabular-nums w-24 text-right">
-                      {grpSubtotal.toFixed(2)} €
-                    </span>
+                  </div>
+
+                  {/* fila de totales */}
+                  <div className="px-4 py-2 flex justify-between items-end text-sm">
+                    <span className="text-gray-400 text-xs font-mono">{refKey}</span>
+                    <div className="flex flex-col items-end gap-0.5">
+                      {pendingCount > 0 && (
+                        <span className="text-xs text-yellow-600">
+                          (sin {pendingCount} pendiente{pendingCount > 1 ? 's' : ''})
+                        </span>
+                      )}
+                      {groupDiscounts[refKey] !== undefined && (
+                        <div className="flex items-center gap-4 text-xs">
+                          <span className="text-gray-400 tabular-nums line-through">
+                            {grpSubtotal.toFixed(2)} €
+                          </span>
+                          <span className="text-red-500 font-medium">
+                            −{groupDiscounts[refKey]}% (−{(grpSubtotal * groupDiscounts[refKey] / 100).toFixed(2)} €)
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-500">Total:</span>
+                        <span className="font-bold text-gray-900 tabular-nums w-24 text-right">
+                          {getEffectiveSubtotal(refKey, grpSubtotal).toFixed(2)} €
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </>
@@ -380,17 +489,23 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
       {/* ── totales globales ── */}
       {refKeys.length > 0 && (
         <div className="border-t pt-4 mt-2 space-y-1.5">
+          {Object.keys(groupDiscounts).length > 0 && (
+            <div className="flex justify-end text-sm text-gray-400">
+              <span className="mr-4">Subtotal sin descuentos:</span>
+              <span className="font-medium w-28 text-right tabular-nums line-through">{(subtotal ?? 0).toFixed(2)} €</span>
+            </div>
+          )}
           <div className="flex justify-end text-sm">
             <span className="text-gray-500 mr-4">Subtotal:</span>
-            <span className="font-medium w-28 text-right tabular-nums">{(subtotal ?? 0).toFixed(2)} €</span>
+            <span className="font-medium w-28 text-right tabular-nums">{effectiveSubtotal.toFixed(2)} €</span>
           </div>
           <div className="flex justify-end text-sm">
             <span className="text-gray-500 mr-4">IVA (21%):</span>
-            <span className="font-medium w-28 text-right tabular-nums">{(iva ?? 0).toFixed(2)} €</span>
+            <span className="font-medium w-28 text-right tabular-nums">{effectiveIva.toFixed(2)} €</span>
           </div>
           <div className="flex justify-end text-lg font-bold border-t pt-2 mt-1">
             <span className="mr-4">Total:</span>
-            <span className="w-28 text-right tabular-nums">{(total ?? 0).toFixed(2)} €</span>
+            <span className="w-28 text-right tabular-nums">{effectiveTotal.toFixed(2)} €</span>
           </div>
 
           {/* Feedback de precios */}
