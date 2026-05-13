@@ -106,7 +106,7 @@ const REF_COLORS = [
 
 // ── component ─────────────────────────────────────────────────────────────────
 
-export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChange, onDescriptionsChange, originalLineas, onSavePriceFeedback, isSavingFeedback, onDiscountsChange }: EstimateBreakdownProps) {
+export default function EstimateBreakdown({ lineas, subtotal, onChange, onDescriptionsChange, originalLineas, onSavePriceFeedback, isSavingFeedback, onDiscountsChange }: EstimateBreakdownProps) {
   const groups   = groupByRef(lineas);
   const refKeys  = Array.from(groups.keys());
 
