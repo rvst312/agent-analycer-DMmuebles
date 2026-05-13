@@ -47,6 +47,15 @@ export const knowledgeApi = {
     return response.data;
   },
 
+  bulkDelete: async (ids: string[]): Promise<{ status: string; deleted: number }> => {
+    const token = await getAdminToken();
+    const response = await apiClient.delete('/knowledge/bulk', {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { ids },
+    });
+    return response.data;
+  },
+
   importCsv: async (file: File): Promise<ImportResponse> => {
     const token = await getAdminToken();
     const formData = new FormData();

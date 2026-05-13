@@ -78,6 +78,25 @@ def update_knowledge(precio_id: str, metadata_update: PrecioUpdate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.delete("/bulk", response_model=dict)
+def bulk_delete_knowledge(payload: dict):
+    """
+    Elimina en lote los precios cuyos IDs se envían en {"ids": [...]}.
+    Límite: 5000 IDs por llamada.
+    """
+    ids = payload.get("ids", [])
+    if not ids or not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="Se requiere una lista 'ids' no vacía")
+    if len(ids) > 5000:
+        raise HTTPException(status_code=400, detail="Máximo 5000 IDs por petición")
+    try:
+        from rag.embeddings import precios_collection
+        precios_collection.delete(ids=ids)
+        return {"status": "success", "deleted": len(ids)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/{precio_id}", response_model=dict)
 def delete_knowledge(precio_id: str):
     """

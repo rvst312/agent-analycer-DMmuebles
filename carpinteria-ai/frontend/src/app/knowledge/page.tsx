@@ -6,7 +6,7 @@ import AddPriceModal from '@/components/AddPriceModal';
 import { knowledgeApi } from '@/lib/knowledge-api';
 import { PrecioResponse } from '@/types/knowledge';
 import { toast } from 'sonner';
-import { Upload, Loader2, Search, Filter, Download, Plus } from 'lucide-react';
+import { Upload, Loader2, Search, Filter, Download, Plus, Trash2, FileDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 type ApiError = { response?: { data?: { detail?: unknown } } };
@@ -35,6 +35,10 @@ export default function KnowledgePage() {
   // Importación
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Selección masiva
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   // Paginación
   const [skip, setSkip] = useState(0);
@@ -76,6 +80,11 @@ export default function KnowledgePage() {
     fetchPrecios(skip, debouncedSearch, debouncedCategoria);
   }, [skip, debouncedSearch, debouncedCategoria, fetchPrecios]);
 
+  // Limpiar selección al cambiar filtros
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [debouncedSearch, debouncedCategoria]);
+
   const handleUpdatePrecio = async (id: string, nuevoPrecio: number) => {
     try {
       await knowledgeApi.updatePrecio(id, { precio_unitario: nuevoPrecio });
@@ -102,6 +111,25 @@ export default function KnowledgePage() {
       console.error(err);
       toast.error(extractErrorMessage(err, 'Error al añadir el precio'));
       throw err;
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const count = selectedIds.size;
+    if (count === 0) return;
+    if (!confirm(`¿Eliminar ${count} precio${count === 1 ? '' : 's'} seleccionado${count === 1 ? '' : 's'}? Esta acción no se puede deshacer.`)) return;
+    setIsBulkDeleting(true);
+    try {
+      await knowledgeApi.bulkDelete(Array.from(selectedIds));
+      toast.success(`${count} precio${count === 1 ? '' : 's'} eliminado${count === 1 ? '' : 's'} correctamente`);
+      setSelectedIds(new Set());
+      setSkip(0);
+      await fetchPrecios(0, debouncedSearch, debouncedCategoria);
+    } catch (err) {
+      console.error(err);
+      toast.error(extractErrorMessage(err, 'Error al eliminar los precios seleccionados'));
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -148,6 +176,22 @@ export default function KnowledgePage() {
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
+  };
+
+  const handleDownloadTemplate = () => {
+    const headers = 'id,material,cliente,precio_unitario,unidad,categoria,texto,version';
+    const example = ',Tablero melamina blanco 19mm,general,28.50,m2,materia_prima,tablero para módulo armario,1.0';
+    const csvContent = `${headers}\n${example}`;
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'plantilla_precios.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.success('Plantilla descargada');
   };
 
   const handleExportCSV = () => {
@@ -213,8 +257,17 @@ export default function KnowledgePage() {
             accept=".csv" 
             onChange={handleFileChange} 
           />
-          <Button 
-            onClick={handleImportClick} 
+          <Button
+            variant="outline"
+            onClick={handleDownloadTemplate}
+            className="flex items-center gap-2"
+            title="Descargar plantilla CSV para importar"
+          >
+            <FileDown className="w-4 h-4" />
+            Plantilla CSV
+          </Button>
+          <Button
+            onClick={handleImportClick}
             disabled={isImporting}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700"
           >
@@ -268,11 +321,41 @@ export default function KnowledgePage() {
         </div>
       </div>
 
-      <PriceTable 
-        precios={precios} 
-        loading={loading && skip === 0} 
-        onUpdatePrecio={handleUpdatePrecio} 
+      {selectedIds.size > 0 && (
+        <div className="mb-4 px-4 py-3 bg-blue-600 text-white rounded-lg flex items-center justify-between shadow-md">
+          <span className="text-sm font-medium">
+            {selectedIds.size} {selectedIds.size === 1 ? 'elemento seleccionado' : 'elementos seleccionados'}
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="text-sm text-blue-200 hover:text-white underline"
+            >
+              Deseleccionar todo
+            </button>
+            <Button
+              onClick={handleBulkDelete}
+              disabled={isBulkDeleting}
+              className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white border-0"
+            >
+              {isBulkDeleting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Trash2 className="w-4 h-4" />
+              )}
+              {isBulkDeleting ? 'Eliminando...' : 'Eliminar seleccionados'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <PriceTable
+        precios={precios}
+        loading={loading && skip === 0}
+        onUpdatePrecio={handleUpdatePrecio}
         onDeletePrecio={handleDeletePrecio}
+        selectedIds={selectedIds}
+        onSelectionChange={setSelectedIds}
       />
       
       {!loading && precios.length > 0 && precios.length % limit === 0 && (
