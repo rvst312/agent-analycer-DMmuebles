@@ -59,8 +59,10 @@ async def save(file_bytes: bytes, filename: str, content_type: str) -> None:
             await _s3_upload(file_bytes, filename, content_type)
             logger.info(f"storage: uploaded {filename} → R2 bucket '{_BUCKET}'")
         except Exception as e:
+            # R2 failure is non-fatal: the file is already on local disk so the
+            # vision agent can process it. Log clearly so credentials can be fixed.
             logger.error(f"storage: R2 upload failed for {filename}: {e}")
-            raise
+            logger.warning("storage: continuing with local-only storage — fix R2 credentials to enable durable uploads")
 
 
 async def delete(filename: str) -> None:
