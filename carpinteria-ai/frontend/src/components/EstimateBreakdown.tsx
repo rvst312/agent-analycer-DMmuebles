@@ -1,7 +1,7 @@
 "use client";
 
-import { LineaPresupuesto } from '@/types/estimate';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { LineaPresupuesto, PriceCorrection } from '@/types/estimate';
+import { ChevronDown, ChevronUp, BrainCircuit, CheckCircle2 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 
 interface EstimateBreakdownProps {
@@ -11,6 +11,9 @@ interface EstimateBreakdownProps {
   total: number;
   onChange: (newLineas: LineaPresupuesto[]) => void;
   onDescriptionsChange?: (descriptions: Record<string, string>) => void;
+  originalLineas?: LineaPresupuesto[];
+  onSavePriceFeedback?: (corrections: PriceCorrection[]) => void;
+  isSavingFeedback?: boolean;
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -100,7 +103,7 @@ const REF_COLORS = [
 
 // ── component ─────────────────────────────────────────────────────────────────
 
-export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChange, onDescriptionsChange }: EstimateBreakdownProps) {
+export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChange, onDescriptionsChange, originalLineas, onSavePriceFeedback, isSavingFeedback }: EstimateBreakdownProps) {
   const groups   = groupByRef(lineas);
   const refKeys  = Array.from(groups.keys());
 
@@ -137,6 +140,34 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
       return changed ? next : prev;
     });
   }, [lineas]);
+
+  // Build set of global indices whose precio_unitario was manually changed
+  const changedIndices = React.useMemo<Set<number>>(() => {
+    if (!originalLineas) return new Set();
+    const s = new Set<number>();
+    lineas.forEach((l, idx) => {
+      const orig = originalLineas[idx];
+      if (orig && Math.abs(l.precio_unitario - orig.precio_unitario) > 0.001) s.add(idx);
+    });
+    return s;
+  }, [lineas, originalLineas]);
+
+  const pendingCorrections = React.useMemo<PriceCorrection[]>(() => {
+    if (!originalLineas) return [];
+    const result: PriceCorrection[] = [];
+    lineas.forEach((l, idx) => {
+      const orig = originalLineas[idx];
+      if (orig && Math.abs(l.precio_unitario - orig.precio_unitario) > 0.001) {
+        result.push({
+          codigo: l.codigo,
+          descripcion: l.descripcion,
+          precio_original: orig.precio_unitario,
+          precio_corregido: l.precio_unitario,
+        });
+      }
+    });
+    return result;
+  }, [lineas, originalLineas]);
 
   const toggleGroup = (ref: string) => {
     setOpenGroups(prev => {
@@ -291,10 +322,25 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
 
                             {/* precio unitario */}
                             <td className="px-3 py-2 align-top">
-                              <input type="number" step="0.01" min="0"
-                                className={`w-full border rounded p-1.5 text-right text-sm transition-colors focus:ring-1 focus:bg-white ${linea.precio_pendiente ? 'border-yellow-400 focus:ring-yellow-400 bg-yellow-50/50' : 'border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-blue-400 bg-transparent'}`}
-                                value={linea.precio_unitario}
-                                onChange={e => handleLineChange(globalIdx, 'precio_unitario', parseFloat(e.target.value) || 0)} />
+                              <div className="flex items-center gap-1 justify-end">
+                                {changedIndices.has(globalIdx) && (
+                                  <span title="Precio corregido · se guardará como aprendizaje"
+                                    className="flex items-center gap-0.5 text-emerald-600 text-xs font-semibold shrink-0">
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">Corregido</span>
+                                  </span>
+                                )}
+                                <input type="number" step="0.01" min="0"
+                                  className={`w-24 border rounded p-1.5 text-right text-sm transition-colors focus:ring-1 focus:bg-white ${
+                                    changedIndices.has(globalIdx)
+                                      ? 'border-emerald-400 focus:ring-emerald-400 bg-emerald-50/40'
+                                      : linea.precio_pendiente
+                                        ? 'border-yellow-400 focus:ring-yellow-400 bg-yellow-50/50'
+                                        : 'border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-blue-400 bg-transparent'
+                                  }`}
+                                  value={linea.precio_unitario}
+                                  onChange={e => handleLineChange(globalIdx, 'precio_unitario', parseFloat(e.target.value) || 0)} />
+                              </div>
                             </td>
 
                             {/* subtotal */}
@@ -346,6 +392,29 @@ export default function EstimateBreakdown({ lineas, subtotal, iva, total, onChan
             <span className="mr-4">Total:</span>
             <span className="w-28 text-right tabular-nums">{(total ?? 0).toFixed(2)} €</span>
           </div>
+
+          {/* Feedback de precios */}
+          {pendingCorrections.length > 0 && onSavePriceFeedback && (
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-emerald-800">
+                  {pendingCorrections.length} precio{pendingCorrections.length > 1 ? 's' : ''} corregido{pendingCorrections.length > 1 ? 's' : ''}
+                </p>
+                <p className="text-xs text-emerald-600 mt-0.5">
+                  Guarda las correcciones para mejorar la precisión del modelo en futuros presupuestos.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isSavingFeedback}
+                onClick={() => onSavePriceFeedback(pendingCorrections)}
+                className="flex items-center gap-1.5 shrink-0 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60 transition-colors"
+              >
+                <BrainCircuit className="w-4 h-4" />
+                {isSavingFeedback ? 'Guardando…' : 'Guardar y aprender'}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -48,10 +48,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Carpintería AI API", lifespan=lifespan)
 
-# Persistent upload directory — configurable via UPLOAD_DIR env var (mounted volume in Docker)
-UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/app/uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+import storage as _storage
+
+# Local uploads dir — always created so the vision agent can write temp files.
+os.makedirs(_storage.UPLOAD_DIR, exist_ok=True)
+
+if not _storage.is_cloud():
+    # In local dev serve files directly; in production they come from R2.
+    app.mount("/uploads", StaticFiles(directory=_storage.UPLOAD_DIR), name="uploads")
+else:
+    logger.info(f"Cloud storage active (R2 bucket: {os.environ.get('S3_BUCKET_NAME')}). /uploads not mounted.")
 
 # Configuración de CORS
 # Configura CORS_ORIGINS como lista separada por comas en producción, p.ej:

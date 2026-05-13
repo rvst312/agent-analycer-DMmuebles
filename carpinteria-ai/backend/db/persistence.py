@@ -49,9 +49,11 @@ def _apply_migrations(conn):
     is_pg = conn.dialect.name == "postgresql"
     ts_type = "TIMESTAMP WITHOUT TIME ZONE" if is_pg else "DATETIME"
 
+    json_type = "JSONB" if is_pg else "JSON"
     new_cols = {
-        "image_path": "ALTER TABLE presupuestos ADD COLUMN image_path TEXT",
-        "updated_at": f"ALTER TABLE presupuestos ADD COLUMN updated_at {ts_type}",
+        "image_path":    "ALTER TABLE presupuestos ADD COLUMN image_path TEXT",
+        "updated_at":    f"ALTER TABLE presupuestos ADD COLUMN updated_at {ts_type}",
+        "archivos_keys": f"ALTER TABLE presupuestos ADD COLUMN archivos_keys {json_type}",
     }
     for col, sql in new_cols.items():
         if col not in existing:

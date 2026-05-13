@@ -3,10 +3,10 @@ import glob
 import json
 import logging
 import os
-import shutil
 import uuid
 from datetime import datetime, timezone
 
+import storage
 from core.events import publish, start, stop, subscribe, unsubscribe
 from db.models import PresupuestoModel
 from db.persistence import async_session_maker, get_checkpointer
@@ -21,22 +21,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/estimates", tags=["Estimates"])
 
 ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "application/pdf"}
-UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/app/uploads")
-
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-def _all_image_urls(estimate_id: str, archivos_paths: list | None = None) -> list[str]:
-    """Return sorted /uploads URLs for all files belonging to this estimate."""
+def _all_image_urls(
+    estimate_id: str,
+    archivos_paths: list | None = None,
+    archivos_keys: list | None = None,
+) -> list[str]:
+    """Return public URLs for all files belonging to this estimate."""
+    # Priority 1: R2/S3 keys stored in DB (most reliable)
+    if archivos_keys:
+        return [storage.get_url(k) for k in archivos_keys]
+    # Priority 2: LangGraph state paths (convert basename → URL)
     if archivos_paths:
-        return [f"/uploads/{os.path.basename(p)}" for p in archivos_paths]
-    # Fallback: scan UPLOAD_DIR for files named {estimate_id}_N.ext
-    def _sort_key(p: str) -> int:
-        stem = os.path.splitext(os.path.basename(p))[0]
-        idx = stem.rsplit("_", 1)[-1]
-        return int(idx) if idx.isdigit() else 999
-    files = sorted(glob.glob(os.path.join(UPLOAD_DIR, f"{estimate_id}_*")), key=_sort_key)
-    return [f"/uploads/{os.path.basename(f)}" for f in files]
+        return [storage.get_url(os.path.basename(p)) for p in archivos_paths]
+    # Fallback: scan local UPLOAD_DIR (only works in local/dev mode)
+    if not storage.is_cloud():
+        def _sort_key(p: str) -> int:
+            stem = os.path.splitext(os.path.basename(p))[0]
+            idx = stem.rsplit("_", 1)[-1]
+            return int(idx) if idx.isdigit() else 999
+        files = sorted(glob.glob(os.path.join(storage.UPLOAD_DIR, f"{estimate_id}_*")), key=_sort_key)
+        return [storage.get_url(os.path.basename(f)) for f in files]
+    return []
 
 
 async def _db_set_error(estimate_id: str, error_msg: str) -> None:
@@ -152,30 +159,33 @@ async def create_estimate(
             )
 
     estimate_id = str(uuid.uuid4())
-    file_paths: List[str] = []
+    file_paths: List[str] = []   # local paths — for the vision agent
+    filenames: List[str] = []    # basenames — stored as R2 keys in DB
     content_types: List[str] = []
 
     try:
         for i, f in enumerate(files):
             extension = f.filename.split('.')[-1] if f.filename and '.' in f.filename else ''
             filename = f"{estimate_id}_{i}.{extension}" if extension else f"{estimate_id}_{i}"
-            file_path = os.path.join(UPLOAD_DIR, filename)
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(f.file, buffer)
-            file_paths.append(file_path)
-            content_types.append(f.content_type or "image/jpeg")
+            ct = f.content_type or "image/jpeg"
+            file_bytes = await f.read()
+            await storage.save(file_bytes, filename, ct)
+            file_paths.append(storage.local_path(filename))
+            filenames.append(filename)
+            content_types.append(ct)
     except Exception as e:
         logger.error(f"Error guardando archivos: {e}")
         raise HTTPException(status_code=500, detail="Error al guardar los archivos subidos.")
 
-    # Register in DB (primary image = first file)
+    # Register in DB — image_path stores the first filename (key), archivos_keys stores all
     try:
         async with async_session_maker() as session:
             record = PresupuestoModel(
                 id=estimate_id,
                 cliente_id=cliente_id,
                 plano_id=estimate_id,
-                image_path=file_paths[0],
+                image_path=filenames[0],
+                archivos_keys=filenames,
                 status="processing",
                 lineas=[],
                 lineas_pendientes=[],
@@ -211,11 +221,8 @@ async def stream_estimate_events(estimate_id: str):
                 )
                 record = result.scalars().first()
             if record:
-                image_url = (
-                    f"/uploads/{os.path.basename(record.image_path)}"
-                    if record.image_path else None
-                )
-                image_urls = _all_image_urls(estimate_id)
+                image_url = storage.get_url(os.path.basename(record.image_path)) if record.image_path else None
+                image_urls = _all_image_urls(estimate_id, archivos_keys=record.archivos_keys)
                 yield f"data: {json.dumps({'type': 'current_state', 'status': record.status, 'total': record.total, 'lineas': record.lineas or [], 'image_url': image_url, 'image_urls': image_urls})}\n\n"
         except Exception as e:
             logger.error(f"SSE snapshot error for {estimate_id}: {e}")
@@ -257,10 +264,7 @@ async def list_estimates():
 
             estimates = []
             for r in records:
-                image_url = (
-                    f"/uploads/{os.path.basename(r.image_path)}"
-                    if r.image_path else None
-                )
+                image_url = storage.get_url(os.path.basename(r.image_path)) if r.image_path else None
                 estimates.append({
                     "estimate_id": r.plano_id,
                     "status": r.status,
@@ -298,11 +302,11 @@ async def delete_estimate(estimate_id: str):
                 )
 
             for record in records:
-                if record.image_path and os.path.exists(record.image_path):
-                    try:
-                        os.remove(record.image_path)
-                    except Exception as e:
-                        logger.warning(f"No se pudo eliminar la imagen {record.image_path}: {e}")
+                keys = record.archivos_keys or (
+                    [os.path.basename(record.image_path)] if record.image_path else []
+                )
+                for key in keys:
+                    await storage.delete(key)
                 await session.delete(record)
 
             await session.commit()
@@ -354,6 +358,62 @@ async def save_component_corrections(estimate_id: str, body: dict):
     except Exception as e:
         logger.error(f"Error saving component corrections for {estimate_id}: {e}")
         raise HTTPException(status_code=500, detail="Error saving component corrections")
+
+
+@router.post("/{estimate_id}/learn-pricing", status_code=status.HTTP_200_OK)
+async def save_pricing_corrections(estimate_id: str, body: dict):
+    """
+    Store price corrections as training feedback and update ChromaDB so future RAG
+    queries return improved pricing for the same materials.
+    """
+    from db.models import PriceFeedbackModel
+    from rag.embeddings import apply_price_feedback
+
+    correcciones = body.get("correcciones", [])
+    if not correcciones:
+        raise HTTPException(status_code=400, detail="correcciones is required")
+
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(PresupuestoModel).where(PresupuestoModel.plano_id == estimate_id)
+            )
+            record = result.scalars().first()
+            if not record:
+                raise HTTPException(status_code=404, detail=f"Estimate {estimate_id} not found")
+
+            cliente_id = record.cliente_id
+
+            # Try to update ChromaDB for each correction
+            enriched = []
+            for c in correcciones:
+                descripcion = c.get("descripcion", "")
+                precio_corregido = float(c.get("precio_corregido", 0))
+                updated = False
+                if descripcion and precio_corregido > 0:
+                    updated = apply_price_feedback(cliente_id, descripcion, precio_corregido)
+                enriched.append({**c, "chroma_updated": updated})
+
+            feedback = PriceFeedbackModel(
+                plano_id=estimate_id,
+                cliente_id=cliente_id,
+                correcciones=enriched,
+            )
+            session.add(feedback)
+            await session.commit()
+
+        updated_count = sum(1 for c in enriched if c.get("chroma_updated"))
+        logger.info(
+            f"Price feedback saved for {estimate_id}: {len(enriched)} corrections, "
+            f"{updated_count} ChromaDB entries updated"
+        )
+        return {"saved": True, "total": len(enriched), "chroma_updated": updated_count}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving price feedback for {estimate_id}: {e}")
+        raise HTTPException(status_code=500, detail="Error saving price feedback")
 
 
 @router.get("/{estimate_id}", status_code=status.HTTP_200_OK)
@@ -410,10 +470,14 @@ async def get_estimate_status(estimate_id: str):
                 "plano_id": state_values.get("plano_id"),
                 "cliente_id": state_values.get("cliente_id"),
                 "image_url": (
-                    f"/uploads/{os.path.basename(archivos_paths[0])}"
+                    storage.get_url(os.path.basename(archivos_paths[0]))
                     if archivos_paths else None
                 ),
-                "image_urls": _all_image_urls(estimate_id, archivos_paths),
+                "image_urls": _all_image_urls(
+                    estimate_id,
+                    archivos_paths=archivos_paths,
+                    archivos_keys=db_record.archivos_keys,
+                ),
                 "plano_analizado": state_values.get("plano_analizado"),
                 "presupuesto_calculado": state_values.get("presupuesto_calculado"),
                 "presupuesto_consolidado": state_values.get("presupuesto_consolidado"),
@@ -427,17 +491,14 @@ async def get_estimate_status(estimate_id: str):
         logger.warning(f"Checkpoint no disponible para {estimate_id}, usando DB. Error: {e}")
 
     # --- 3. DB fallback — checkpoint missing or unreadable ---
-    image_url = (
-        f"/uploads/{os.path.basename(db_record.image_path)}"
-        if db_record.image_path else None
-    )
+    image_url = storage.get_url(os.path.basename(db_record.image_path)) if db_record.image_path else None
     response = {
         "estimate_id": estimate_id,
         "status": db_record.status,
         "plano_id": db_record.plano_id,
         "cliente_id": db_record.cliente_id,
         "image_url": image_url,
-        "image_urls": _all_image_urls(estimate_id),
+        "image_urls": _all_image_urls(estimate_id, archivos_keys=db_record.archivos_keys),
     }
     if db_record.lineas:
         response["presupuesto_consolidado"] = {

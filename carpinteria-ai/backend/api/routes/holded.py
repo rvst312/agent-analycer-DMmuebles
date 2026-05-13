@@ -1,8 +1,10 @@
 import logging
 import os
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/holded", tags=["holded"])
 logger = logging.getLogger(__name__)
@@ -12,7 +14,14 @@ HOLDED_BASE_URL = "https://api.holded.com/api/invoicing/v1"
 
 
 def _headers() -> dict:
-    return {"key": HOLDED_API_KEY, "Accept": "application/json"}
+    return {"key": HOLDED_API_KEY, "Accept": "application/json", "Content-Type": "application/json"}
+
+
+class CreateContactBody(BaseModel):
+    nombre: str
+    email: Optional[str] = None
+    telefono: Optional[str] = None
+    nif: Optional[str] = None
 
 
 @router.get("/contacts")
@@ -63,3 +72,48 @@ async def get_contacts():
         ],
         key=lambda x: x["name"].lower(),
     )
+
+
+@router.post("/contacts", status_code=201)
+async def create_contact(body: CreateContactBody):
+    """Create a new client contact in Holded and return {id, name}."""
+    if not HOLDED_API_KEY:
+        raise HTTPException(status_code=503, detail="HOLDED_API_KEY not configured")
+
+    nombre = body.nombre.strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="El nombre es obligatorio")
+
+    payload: dict = {"name": nombre, "type": "client"}
+    if body.nif:
+        payload["code"] = body.nif.strip()
+    if body.email:
+        payload["email"] = body.email.strip()
+    if body.telefono:
+        payload["phone"] = body.telefono.strip()
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.post(
+                f"{HOLDED_BASE_URL}/contacts",
+                headers=_headers(),
+                json=payload,
+            )
+            resp.raise_for_status()
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=504, detail="Timeout conectando con Holded")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Holded create contact HTTP error: {e.response.status_code} — {e.response.text}")
+            raise HTTPException(status_code=502, detail=f"Holded devolvió {e.response.status_code}")
+        except Exception as e:
+            logger.error(f"Error creating Holded contact: {e}")
+            raise HTTPException(status_code=500, detail="Error creando contacto en Holded")
+
+    result = resp.json()
+    contact_id = result.get("id")
+    if not contact_id or result.get("status") == 0:
+        logger.error(f"Holded rejected contact creation: {result}")
+        raise HTTPException(status_code=502, detail="Holded no pudo crear el contacto")
+
+    logger.info(f"Created Holded contact: {contact_id} ({nombre})")
+    return {"id": contact_id, "name": nombre}

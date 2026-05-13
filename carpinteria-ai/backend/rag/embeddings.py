@@ -174,6 +174,24 @@ def query_precios(texto: str, cliente_id: str, version: Optional[str] = None, n_
 
     return formatted_results
 
+def apply_price_feedback(cliente_id: str, descripcion: str, precio_corregido: float) -> bool:
+    """
+    Find the best matching ChromaDB entry for this description+client and update its price.
+    Returns True if a match was found and updated (distance < 0.6), False otherwise.
+    """
+    results = query_precios(descripcion, cliente_id, n_results=1)
+    if not results:
+        return False
+    best = results[0]
+    if best.get("distancia", 1.0) > 0.6:
+        return False
+    try:
+        update_precio_metadata(best["id"], {"precio_unitario": precio_corregido})
+        return True
+    except Exception:
+        return False
+
+
 def seed_datos_ejemplo() -> None:
     """
     Puebla la colección 'precios' con datos de ejemplo para desarrollo.

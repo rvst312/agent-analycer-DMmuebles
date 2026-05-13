@@ -17,3 +17,4 @@ psycopg-pool
 python-multipart
 pyjwt
 aiosqlite
+aioboto3

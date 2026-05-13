@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Loader2, Search, X } from "lucide-react";
+import { Loader2, Plus, Search, X } from "lucide-react";
 
 interface Contact {
   id: string;
@@ -15,6 +15,7 @@ interface ContactSearchProps {
   value: string;
   onChange: (id: string) => void;
   disabled?: boolean;
+  onCreateNew?: (initialName: string) => void;
 }
 
 export default function ContactSearch({
@@ -24,6 +25,7 @@ export default function ContactSearch({
   value,
   onChange,
   disabled = false,
+  onCreateNew,
 }: ContactSearchProps) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -133,13 +135,32 @@ export default function ContactSearch({
 
       {/* Dropdown */}
       {open && !loading && (
-        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
-          {filtered.length === 0 ? (
-            <div className="px-3 py-6 text-center text-sm text-gray-500">
-              {query ? `Sin resultados para "${query}"` : "No hay clientes"}
-            </div>
-          ) : (
-            filtered.map((contact) => (
+        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg flex flex-col">
+          {/* Botón fijo arriba */}
+          {onCreateNew && (
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2.5 text-sm font-medium text-blue-600 hover:bg-blue-50 border-b border-gray-100 flex items-center gap-2 transition-colors shrink-0"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setOpen(false);
+                setQuery("");
+                onCreateNew(query.trim());
+              }}
+            >
+              <Plus className="w-4 h-4 shrink-0" />
+              {query.trim() ? `Crear "${query.trim()}"` : "Crear nuevo cliente"}
+            </button>
+          )}
+
+          {/* Lista scrollable */}
+          <div className="overflow-y-auto max-h-56">
+            {filtered.length === 0 && (
+              <div className="px-3 py-4 text-center text-sm text-gray-500">
+                {query ? `Sin resultados para "${query}"` : "No hay clientes"}
+              </div>
+            )}
+            {filtered.map((contact) => (
               <button
                 key={contact.id}
                 type="button"
@@ -151,8 +172,8 @@ export default function ContactSearch({
               >
                 {contact.name}
               </button>
-            ))
-          )}
+            ))}
+          </div>
         </div>
       )}
     </div>

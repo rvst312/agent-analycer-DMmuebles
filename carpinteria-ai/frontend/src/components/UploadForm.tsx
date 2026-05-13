@@ -9,6 +9,8 @@ import { useRouter } from "next/navigation";
 import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "application/pdf"];
 
@@ -26,6 +28,13 @@ function validateFile(f: File): string | null {
   return null;
 }
 
+interface CreateContactForm {
+  nombre: string;
+  email: string;
+  telefono: string;
+  nif: string;
+}
+
 export default function UploadForm() {
   const router = useRouter();
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
@@ -37,9 +46,12 @@ export default function UploadForm() {
   const [contactsError, setContactsError]     = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [createForm, setCreateForm] = useState<CreateContactForm>({ nombre: "", email: "", telefono: "", nif: "" });
+
   useEffect(() => {
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    fetch(`${baseUrl}/holded/contacts`)
+    fetch(`${BASE_URL}/holded/contacts`)
       .then(r => { if (!r.ok) throw new Error(); return r.json() as Promise<HoldedContact[]>; })
       .then(d  => { setContacts(d); setContactsLoading(false); })
       .catch(() => { setContactsError("No se pudieron cargar los clientes."); setContactsLoading(false); });
@@ -87,6 +99,40 @@ export default function UploadForm() {
     if (e.target.files?.length) addFiles(e.target.files);
   };
 
+  const handleCreateContact = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const nombre = createForm.nombre.trim();
+    if (!nombre) { toast.error("El nombre es obligatorio."); return; }
+
+    setIsCreating(true);
+    try {
+      const res = await fetch(`${BASE_URL}/holded/contacts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nombre,
+          email:    createForm.email.trim()    || undefined,
+          telefono: createForm.telefono.trim() || undefined,
+          nif:      createForm.nif.trim()      || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { detail?: string };
+        throw new Error(err.detail ?? `Error ${res.status}`);
+      }
+      const newContact: HoldedContact = await res.json();
+      setContacts(prev => [...prev, newContact].sort((a, b) => a.name.localeCompare(b.name)));
+      setClientId(newContact.id);
+      setShowCreateModal(false);
+      setCreateForm({ nombre: "", email: "", telefono: "", nif: "" });
+      toast.success(`Cliente "${newContact.name}" creado correctamente.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error creando el cliente.");
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
   const handleSubmit = async (e?: React.FormEvent | React.MouseEvent) => {
     if (e) e.preventDefault();
     if (!selectedFiles.length) { toast.error("Selecciona al menos un plano."); return; }
@@ -98,8 +144,7 @@ export default function UploadForm() {
       selectedFiles.forEach(sf => formData.append("files", sf.file));
       formData.append("cliente_id", clientId);
 
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const res = await fetch(`${baseUrl}/estimates`, { method: "POST", body: formData });
+      const res = await fetch(`${BASE_URL}/estimates`, { method: "POST", body: formData });
 
       if (res.ok || res.status === 202) {
         const data = await res.json();
@@ -137,6 +182,10 @@ export default function UploadForm() {
               value={clientId}
               onChange={setClientId}
               disabled={isUploading}
+              onCreateNew={(initialName) => {
+                setCreateForm({ nombre: initialName, email: "", telefono: "", nif: "" });
+                setShowCreateModal(true);
+              }}
             />
           </div>
 
@@ -249,6 +298,101 @@ export default function UploadForm() {
           )}
         </Button>
       </CardFooter>
+
+      {/* Modal: crear nuevo cliente */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h3 className="text-base font-semibold text-gray-900">Nuevo cliente</h3>
+              <button
+                type="button"
+                onClick={() => { setShowCreateModal(false); setCreateForm({ nombre: "", email: "", telefono: "", nif: "" }); }}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+                disabled={isCreating}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateContact} className="px-6 py-5 space-y-4">
+              {/* Nombre */}
+              <div className="space-y-1.5">
+                <Label htmlFor="cc-nombre">
+                  Nombre <span className="text-red-500">*</span>
+                </Label>
+                <input
+                  id="cc-nombre"
+                  type="text"
+                  required
+                  autoFocus
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  placeholder="Nombre o razón social"
+                  value={createForm.nombre}
+                  onChange={e => setCreateForm(f => ({ ...f, nombre: e.target.value }))}
+                  disabled={isCreating}
+                />
+              </div>
+
+              {/* Email */}
+              <div className="space-y-1.5">
+                <Label htmlFor="cc-email">Email</Label>
+                <input
+                  id="cc-email"
+                  type="email"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  placeholder="cliente@ejemplo.com"
+                  value={createForm.email}
+                  onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))}
+                  disabled={isCreating}
+                />
+              </div>
+
+              {/* Teléfono + NIF en fila */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="cc-tel">Teléfono</Label>
+                  <input
+                    id="cc-tel"
+                    type="tel"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    placeholder="+34 600 000 000"
+                    value={createForm.telefono}
+                    onChange={e => setCreateForm(f => ({ ...f, telefono: e.target.value }))}
+                    disabled={isCreating}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="cc-nif">NIF / CIF</Label>
+                  <input
+                    id="cc-nif"
+                    type="text"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    placeholder="B12345678"
+                    value={createForm.nif}
+                    onChange={e => setCreateForm(f => ({ ...f, nif: e.target.value }))}
+                    disabled={isCreating}
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => { setShowCreateModal(false); setCreateForm({ nombre: "", email: "", telefono: "", nif: "" }); }}
+                  disabled={isCreating}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={isCreating || !createForm.nombre.trim()} className="min-w-[110px]">
+                  {isCreating ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Creando…</> : "Crear cliente"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }

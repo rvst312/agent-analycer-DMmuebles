@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import PlanViewer from "@/components/PlanViewer";
 import EstimateBreakdown from "@/components/EstimateBreakdown";
 import ComponentsEditor from "@/components/ComponentsEditor";
-import { EstimateDetail, LineaPresupuesto, PlanoAnalizado, SSEEvent } from "@/types/estimate";
+import { EstimateDetail, LineaPresupuesto, PlanoAnalizado, PriceCorrection, SSEEvent } from "@/types/estimate";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { BrainCircuit, CheckCircle2, Circle, Loader2 } from "lucide-react";
@@ -62,6 +62,9 @@ export default function EstimatePage() {
   const [total, setTotal] = useState(0);
   const [groupDescriptions, setGroupDescriptions] = useState<Record<string, string>>({});
 
+  const [originalLineas, setOriginalLineas] = useState<LineaPresupuesto[]>([]);
+  const [isSavingFeedback, setIsSavingFeedback] = useState(false);
+
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showLearnModal, setShowLearnModal] = useState(false);
@@ -82,6 +85,12 @@ export default function EstimatePage() {
     }));
   };
 
+  const setLineasWithOriginal = (ls: LineaPresupuesto[]) => {
+    setLineas(ls);
+    recalc(ls);
+    setOriginalLineas(prev => prev.length === 0 ? ls.map(l => ({ ...l })) : prev);
+  };
+
   const recalc = (lines: LineaPresupuesto[]) => {
     const s = lines
       .filter(l => !l.precio_pendiente)
@@ -92,6 +101,29 @@ export default function EstimatePage() {
   };
 
   const handleLineasChange = (nl: LineaPresupuesto[]) => { setLineas(nl); recalc(nl); };
+
+  const handleSavePriceFeedback = async (corrections: PriceCorrection[]) => {
+    if (!corrections.length) return;
+    setIsSavingFeedback(true);
+    try {
+      const res = await fetch(`${BASE_URL}/estimates/${estimateId}/learn-pricing`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ correcciones: corrections }),
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const data = await res.json();
+      toast.success(
+        `Correcciones guardadas. ${data.chroma_updated} precio${data.chroma_updated !== 1 ? 's' : ''} actualizado${data.chroma_updated !== 1 ? 's' : ''} en la base de conocimiento.`
+      );
+      // Reset original so indicators clear
+      setOriginalLineas(lineas.map(l => ({ ...l })));
+    } catch {
+      toast.error("No se pudieron guardar las correcciones de precios.");
+    } finally {
+      setIsSavingFeedback(false);
+    }
+  };
 
   const stopPoll = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -134,8 +166,7 @@ export default function EstimatePage() {
 
       if (data.presupuesto_consolidado) {
         const ls = formatLineas(data.presupuesto_consolidado.lineas || []);
-        setLineas(ls);
-        recalc(ls);
+        setLineasWithOriginal(ls);
       }
 
       if (TERMINAL.has(data.status)) {
@@ -166,8 +197,7 @@ export default function EstimatePage() {
         if (raw.image_urls?.length) setImageUrls(u => u.length >= raw.image_urls!.length ? u : raw.image_urls!);
         if (raw.lineas?.length) {
           const ls = formatLineas(raw.lineas);
-          setLineas(ls);
-          recalc(ls);
+          setLineasWithOriginal(ls);
         }
         if (TERMINAL.has(raw.status)) setIsProcessing(false);
         return;
@@ -193,15 +223,13 @@ export default function EstimatePage() {
           setPlanoAnalizado(raw.plano_analizado as PlanoAnalizado);
         }
 
-        if (presupuesto_calculado?.lineas) { 
+        if (presupuesto_calculado?.lineas) {
           const ls = formatLineas(presupuesto_calculado.lineas);
-          setLineas(ls); 
-          recalc(ls); 
+          setLineasWithOriginal(ls);
         }
         if (presupuesto_consolidado) {
           const ls = formatLineas(presupuesto_consolidado.lineas || []);
-          setLineas(ls);
-          recalc(ls);
+          setLineasWithOriginal(ls);
         }
         if (status && TERMINAL.has(status)) setIsProcessing(false);
 
@@ -361,6 +389,9 @@ export default function EstimatePage() {
                 total={total}
                 onChange={handleLineasChange}
                 onDescriptionsChange={setGroupDescriptions}
+                originalLineas={originalLineas}
+                onSavePriceFeedback={handleSavePriceFeedback}
+                isSavingFeedback={isSavingFeedback}
               />
             )}
           </div>

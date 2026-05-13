@@ -1,3 +1,10 @@
+export interface PriceCorrection {
+  codigo?: string;
+  descripcion: string;
+  precio_original: number;
+  precio_corregido: number;
+}
+
 export interface LineaPresupuesto {
   codigo?: string;   // identificador interno generado (TAB-001, PTA-002…)
   ref?: string;      // código de referencia del plano — clave de agrupación
