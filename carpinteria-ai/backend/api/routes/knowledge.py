@@ -92,6 +92,40 @@ def delete_knowledge(precio_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/normalize-clients", response_model=dict)
+def normalize_client_fields():
+    """
+    One-time migration: lowercase all 'cliente' metadata values in ChromaDB.
+    Safe to call multiple times (idempotent).
+    """
+    from rag.embeddings import precios_collection
+    batch = 500
+    offset = 0
+    updated = 0
+    while True:
+        results = precios_collection.get(limit=batch, offset=offset, include=["metadatas", "documents", "embeddings"])
+        ids = results.get("ids", [])
+        if not ids:
+            break
+        metadatas = results.get("metadatas", [])
+        to_update_ids = []
+        to_update_metas = []
+        for i, meta in enumerate(metadatas):
+            raw = meta.get("cliente", "")
+            normalised = str(raw).strip().lower()
+            if raw != normalised:
+                meta["cliente"] = normalised
+                to_update_ids.append(ids[i])
+                to_update_metas.append(meta)
+        if to_update_ids:
+            precios_collection.update(ids=to_update_ids, metadatas=to_update_metas)
+            updated += len(to_update_ids)
+        offset += batch
+        if len(ids) < batch:
+            break
+    return {"updated": updated, "message": f"Normalización completada: {updated} registros actualizados"}
+
+
 @router.post("/import", response_model=dict, status_code=status.HTTP_200_OK)
 async def import_knowledge(file: UploadFile = File(...)):
     """

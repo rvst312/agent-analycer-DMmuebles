@@ -41,6 +41,9 @@ def upsert_precio(id: str, texto: str, metadatos: dict) -> None:
     except ValueError:
         raise ValueError("precio_unitario debe ser un número (float)")
 
+    # Normalise cliente to lowercase so queries always match
+    metadatos["cliente"] = str(metadatos.get("cliente", "")).strip().lower()
+
     # Añadir campo 'activo' por defecto si no existe
     if "activo" not in metadatos:
         metadatos["activo"] = True
@@ -140,6 +143,8 @@ def query_precios(texto: str, cliente_id: str, version: Optional[str] = None, n_
     Busca precios similares filtrando por cliente_id, activo=True y opcionalmente por version.
     Returns [] safely when no documents match or when n_results > collection size.
     """
+    # Normalise to lowercase to match the stored field (upsert also normalises)
+    cliente_id = str(cliente_id).strip().lower()
     conditions: List[Dict[str, Any]] = [
         {"cliente": {"$eq": cliente_id}},
         {"activo": {"$eq": True}},

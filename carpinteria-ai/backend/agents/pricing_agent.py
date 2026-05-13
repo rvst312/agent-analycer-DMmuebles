@@ -50,17 +50,34 @@ def calculate_pricing(plano: PlanoAnalizado, cliente_id: str, on_line_added=None
         largo_m = comp.largo_cm / 100.0
 
         # 2. Variantes de query RAG — de más específica a más genérica
-        # El tipo va primero porque es el discriminante más fuerte en el catálogo.
         tipo_str = comp.tipo.value if hasattr(comp.tipo, "value") else str(comp.tipo)
+
+        # Map vision-agent tipos to catalog equivalents for better semantic matching
+        _TIPO_CATALOG = {
+            "tablero": "módulo armario tablero",
+            "puerta": "puerta armario",
+            "cajon": "cajón bandeja extraíble armario",
+            "cajón": "cajón bandeja extraíble armario",
+            "estante": "balda estante armario",
+            "herraje": "herraje accesorio",
+            "barra": "barra perchero armario",
+            "armario": "armario módulo",
+        }
+        catalog_hint = _TIPO_CATALOG.get(tipo_str.lower(), tipo_str)
+
         query_variants = [
+            f"{catalog_hint} {comp.material} {comp.acabado}",
+            f"{catalog_hint} {comp.acabado}",
+            f"{catalog_hint} {comp.material}",
             f"{tipo_str} {comp.material} {comp.acabado}",
-            f"{tipo_str} {comp.material}",
             f"{comp.material} {comp.acabado}",
-            f"{comp.material}",
+            f"{catalog_hint}",
         ]
 
         # 3. Consultar RAG: por cada variante intenta cliente y luego catálogo "general".
-        # Se recogen hasta 3 candidatos por variante y se elige el de menor distancia global.
+        # Se recogen hasta 5 candidatos por variante y se elige el de menor distancia global.
+        # Threshold 1.8 — embeddings all-MiniLM-L6-v2 cosine distance, 1.5 era demasiado estricto
+        # para descripciones cortas del agente de visión vs materiales detallados del catálogo.
         precio_unitario = 0.0
         precio_pendiente = True
         mejor_distancia = float("inf")
@@ -68,10 +85,10 @@ def calculate_pricing(plano: PlanoAnalizado, cliente_id: str, on_line_added=None
 
         for query_text in query_variants:
             for client_key in dict.fromkeys([cliente_id, "general"]):
-                resultados = query_precios(query_text, client_key, n_results=3)
+                resultados = query_precios(query_text, client_key, n_results=5)
                 for res in resultados:
                     dist = res.get("distancia", float("inf"))
-                    if dist < mejor_distancia and dist < 1.5:
+                    if dist < mejor_distancia and dist < 1.8:
                         metadatos = res.get("metadatos", {})
                         if "precio_unitario" in metadatos:
                             try:
