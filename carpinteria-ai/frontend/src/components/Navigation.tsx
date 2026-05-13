@@ -1,7 +1,7 @@
 "use client";
 
 import { SecondaryNavbar, SimpleNavbar } from "@/components/ui/core-header-navbar";
-import { Database, FileUp, LayoutDashboard, LogOut } from "lucide-react";
+import { Database, FileUp, LayoutDashboard } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { clearToken } from "@/lib/auth";
 
