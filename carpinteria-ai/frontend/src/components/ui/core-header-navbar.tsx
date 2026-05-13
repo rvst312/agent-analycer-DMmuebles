@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import Link from "next/link";
 import React from "react";
 
-export function SimpleNavbar({ title, userName }: { title: string; userName?: string }) {
+export function SimpleNavbar({ title, userName, onLogout }: { title: string; userName?: string; onLogout?: () => void }) {
   return (
     <div className="bg-white border-b border-gray-100">
       <div className="flex items-center justify-between px-4 sm:px-6 py-3 max-w-7xl mx-auto w-full">
@@ -15,13 +15,26 @@ export function SimpleNavbar({ title, userName }: { title: string; userName?: st
           </div>
           <span className="font-semibold text-gray-900 tracking-tight">{title}</span>
         </Link>
-        
+
         {userName && (
           <div className="flex items-center gap-3">
             <div className="text-sm font-medium text-gray-600 hidden sm:block">{userName}</div>
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold text-white shadow-sm ring-2 ring-white">
               {userName.charAt(0).toUpperCase()}
             </div>
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                title="Cerrar sesión"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                  <polyline points="16 17 21 12 16 7"/>
+                  <line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+              </button>
+            )}
           </div>
         )}
       </div>

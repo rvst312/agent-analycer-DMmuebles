@@ -73,6 +73,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from api.routes.auth import router as auth_router
 from api.routes.estimates import router as estimates_router
 from api.routes.holded import router as holded_router
 from api.routes.knowledge import router as knowledge_router
@@ -104,6 +105,7 @@ async def serve_file(filename: str):
     return Response(content=data, media_type=mime)
 
 
+app.include_router(auth_router)
 app.include_router(estimates_router)
 app.include_router(holded_router)
 app.include_router(knowledge_router)

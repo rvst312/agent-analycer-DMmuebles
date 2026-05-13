@@ -1,18 +1,18 @@
 import apiClient from './api';
 import { PrecioResponse, PrecioUpdate, ImportResponse } from '../types/knowledge';
+import { getToken } from './auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-async function getAdminToken(): Promise<string> {
-  const res = await fetch(`${API_URL}/workflow/token?role=admin`, { method: 'POST' });
-  if (!res.ok) throw new Error('No se pudo obtener el token de administrador');
-  const data = await res.json();
-  return data.access_token;
+function getAdminToken(): string {
+  const token = getToken();
+  if (!token) throw new Error('No autenticado');
+  return token;
 }
 
 export const knowledgeApi = {
   getPrecios: async (skip = 0, limit = 100, activosOnly = false, search?: string, categoria?: string): Promise<PrecioResponse[]> => {
-    const token = await getAdminToken();
+    const token = getAdminToken();
     const params: Record<string, string | number | boolean> = { skip, limit, activos_only: activosOnly };
     if (search) params.search = search;
     if (categoria) params.categoria = categoria;
@@ -24,7 +24,7 @@ export const knowledgeApi = {
   },
 
   createPrecio: async (precio: Omit<PrecioResponse, 'id'>): Promise<{ status: string; message: string }> => {
-    const token = await getAdminToken();
+    const token = getAdminToken();
     const response = await apiClient.post('/knowledge', precio, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -32,7 +32,7 @@ export const knowledgeApi = {
   },
 
   updatePrecio: async (id: string, updateData: PrecioUpdate): Promise<{ status: string; message: string }> => {
-    const token = await getAdminToken();
+    const token = getAdminToken();
     const response = await apiClient.patch(`/knowledge/${id}`, updateData, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -40,7 +40,7 @@ export const knowledgeApi = {
   },
 
   deletePrecio: async (id: string): Promise<{ status: string; message: string }> => {
-    const token = await getAdminToken();
+    const token = getAdminToken();
     const response = await apiClient.delete(`/knowledge/${id}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -48,7 +48,7 @@ export const knowledgeApi = {
   },
 
   bulkDelete: async (ids: string[]): Promise<{ status: string; deleted: number }> => {
-    const token = await getAdminToken();
+    const token = getAdminToken();
     const response = await apiClient.delete('/knowledge/bulk', {
       headers: { Authorization: `Bearer ${token}` },
       data: { ids },
@@ -57,7 +57,7 @@ export const knowledgeApi = {
   },
 
   importCsv: async (file: File): Promise<ImportResponse> => {
-    const token = await getAdminToken();
+    const token = getAdminToken();
     const formData = new FormData();
     formData.append('file', file);
     // Usar fetch directamente: el apiClient tiene Content-Type: application/json por defecto

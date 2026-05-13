@@ -9,6 +9,7 @@ import { EstimateDetail, LineaPresupuesto, PlanoAnalizado, PriceCorrection, SSEE
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { BrainCircuit, CheckCircle2, Circle, Loader2 } from "lucide-react";
+import { getToken } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const MAX_POLL_ATTEMPTS = 30; // ~60 s at 2 s interval before giving up
@@ -299,9 +300,8 @@ export default function EstimatePage() {
       }
       setIsSubmitting(true);
 
-      const tokenRes = await fetch(`${BASE_URL}/workflow/token`, { method: "POST" });
-      if (!tokenRes.ok) throw new Error("No se pudo obtener el token");
-      const { access_token } = await tokenRes.json();
+      const access_token = getToken();
+      if (!access_token) throw new Error("No autenticado");
 
       const res = await fetch(`${BASE_URL}/workflow/resume`, {
         method: "POST",

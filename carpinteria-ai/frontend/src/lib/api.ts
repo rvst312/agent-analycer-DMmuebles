@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { clearToken } from './auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -9,12 +10,14 @@ export const apiClient = axios.create({
   },
 });
 
-// Interceptores opcionales para manejar tokens o errores globales
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Manejo centralizado de errores
     console.error('API Error:', error.response?.data || error.message);
+    if (error.response?.status === 401) {
+      clearToken();
+      window.location.href = '/login';
+    }
     return Promise.reject(error);
   }
 );
