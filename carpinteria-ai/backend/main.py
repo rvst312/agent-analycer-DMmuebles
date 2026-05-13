@@ -77,6 +77,8 @@ from api.routes.estimates import router as estimates_router
 from api.routes.holded import router as holded_router
 from api.routes.knowledge import router as knowledge_router
 from api.routes.workflow import router as workflow_router
+from fastapi import Response
+from fastapi.responses import StreamingResponse
 
 
 @app.get("/")
@@ -86,6 +88,21 @@ def read_root():
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/files/{filename:path}")
+async def serve_file(filename: str):
+    """
+    Proxy endpoint for plan images.
+    Tries local disk first, then falls back to R2 — no public bucket access required.
+    """
+    from fastapi import HTTPException
+    result = await _storage.fetch(filename)
+    if result is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    data, mime = result
+    return Response(content=data, media_type=mime)
+
 
 app.include_router(estimates_router)
 app.include_router(holded_router)

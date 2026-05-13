@@ -38,9 +38,14 @@ def local_path(filename: str) -> str:
 
 
 def get_url(filename: str) -> str:
-    """Public URL to serve a stored file."""
-    if is_cloud() and _PUBLIC_URL:
-        return f"{_PUBLIC_URL}/{filename}"
+    """
+    URL to serve a stored file.
+    - In cloud mode: route through the backend /files/<filename> proxy so images
+      are served even when the R2 bucket has no public access configured.
+    - In local dev: serve from the static /uploads mount.
+    """
+    if is_cloud():
+        return f"/files/{filename}"
     return f"/uploads/{filename}"
 
 
@@ -63,6 +68,33 @@ async def save(file_bytes: bytes, filename: str, content_type: str) -> None:
             # vision agent can process it. Log clearly so credentials can be fixed.
             logger.error(f"storage: R2 upload failed for {filename}: {e}")
             logger.warning("storage: continuing with local-only storage — fix R2 credentials to enable durable uploads")
+
+
+async def fetch(filename: str) -> tuple[bytes, str] | None:
+    """
+    Retrieve a file's raw bytes + content-type.
+    Returns (bytes, content_type) or None if not found anywhere.
+    """
+    import mimetypes
+    # Local disk first
+    lp = local_path(filename)
+    if os.path.exists(lp):
+        mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        with open(lp, "rb") as f:
+            return f.read(), mime
+    # R2 fallback
+    if is_cloud():
+        try:
+            import aioboto3  # type: ignore
+            session = aioboto3.Session()
+            async with session.client("s3", **_s3_client_kwargs()) as s3:
+                obj = await s3.get_object(Bucket=_BUCKET, Key=filename)
+                body = await obj["Body"].read()
+            mime = obj.get("ContentType") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            return body, mime
+        except Exception as e:
+            logger.error(f"storage: R2 fetch failed for {filename}: {e}")
+    return None
 
 
 async def delete(filename: str) -> None:
