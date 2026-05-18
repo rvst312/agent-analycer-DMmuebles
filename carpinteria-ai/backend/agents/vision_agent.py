@@ -5,10 +5,15 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import anthropic
-from api.schemas.estimate import (ComponenteArmario, PlanoAnalizado,
-                                  TipoComponente)
+from api.schemas.estimate import (
+    AnalisisArmario, ComponenteArmario, ItemInteriorArmario,
+    ModuloArmario, PlanoAnalizado, PuertaArmario, TipoComponente,
+)
 
 logger = logging.getLogger(__name__)
+
+PLAN_TYPES = {"armario", "puerta_paso", "rodapie", "mueble_banio", "panelado", "mueble_general"}
+
 
 def _repair_truncated_json(json_content: str, plano_id: str, original_error: Exception) -> dict:
     closers = [
@@ -35,6 +40,7 @@ def _repair_truncated_json(json_content: str, plano_id: str, original_error: Exc
         "error": f"JSON parse error: {str(original_error)}"
     }
 
+
 def _log_error(plano_id: str, error_type: str, details: Any, raw_text: Optional[str] = None):
     log_data = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -45,6 +51,21 @@ def _log_error(plano_id: str, error_type: str, details: Any, raw_text: Optional[
     if raw_text:
         log_data["raw_text"] = raw_text
     logger.error(json.dumps(log_data))
+
+
+def _extract_json_block(response_text: str) -> str:
+    """Extract JSON from <output_format> tags or fall back to first {} block."""
+    if "<output_format>" in response_text and "</output_format>" in response_text:
+        block = response_text.split("<output_format>")[1].split("</output_format>")[0].strip()
+    else:
+        start = response_text.find("{")
+        end = response_text.rfind("}") + 1
+        block = response_text[start:end] if start != -1 else ""
+    if block.startswith("```json"):
+        block = block[7:]
+    if block.endswith("```"):
+        block = block[:-3]
+    return block.strip()
 
 
 SYSTEM_PROMPT = """Eres un experto analista de planos técnicos de carpintería a medida (armarios, muebles de cocina, vestidores).
@@ -74,10 +95,7 @@ def _detect_view_codes(
     media_type: str,
     plano_id: str,
 ) -> List[str]:
-    """
-    Primera pasada: extrae SOLO los códigos de vista del plano.
-    Tarea única y simple para maximizar precisión.
-    """
+    """Primera pasada: extrae SOLO los códigos de vista del plano."""
     pdf_ctx = "Este archivo PDF puede tener VARIAS PÁGINAS. Revisa TODAS las páginas antes de responder.\n\n" if media_type == "application/pdf" else ""
 
     prompt = f"""{pdf_ctx}Mira este plano técnico de carpintería.
@@ -108,18 +126,203 @@ Si no encuentras ninguno, responde exactamente: NINGUNO"""
             }],
         )
         raw = response.content[0].text.strip() if response.content else ""
-        logger.info(f"[PASS-1] Respuesta códigos de vista para plano {plano_id!r}: {raw!r}")
+        logger.info(f"[PASS-1] Códigos de vista para plano {plano_id!r}: {raw!r}")
 
         if not raw or raw.upper() == "NINGUNO":
             return []
-
-        # Limpiar y normalizar: quitar espacios, split por coma
-        codes = [c.strip() for c in raw.split(",") if c.strip()]
-        return codes
+        return [c.strip() for c in raw.split(",") if c.strip()]
 
     except Exception as e:
         logger.warning(f"[PASS-1] Error detectando códigos de vista: {e}")
         return []
+
+
+def _classify_plan_type(
+    client: anthropic.Anthropic,
+    image_base64: str,
+    media_type: str,
+    plano_id: str,
+) -> str:
+    """Segunda pasada: clasifica el tipo de plano."""
+    pdf_ctx = "Este PDF puede tener varias páginas. Analiza el contenido general de todas ellas.\n\n" if media_type == "application/pdf" else ""
+
+    prompt = f"""{pdf_ctx}Clasifica este plano técnico de carpintería en UNA de estas categorías:
+
+armario        → armario empotrado, vestidor, armario a medida
+puerta_paso    → puertas de paso, puertas interiores
+rodapie        → rodapiés, zócalos
+mueble_banio   → mueble de baño, lavabo a medida
+panelado       → panelados de pared, revestimientos
+mueble_general → otros muebles (cocina, librería, TV, etc.)
+
+Responde ÚNICAMENTE con la palabra clave exacta (ej: armario), sin texto adicional."""
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=32,
+            messages=[{
+                "role": "user",
+                "content": [
+                    _make_file_block(image_base64, media_type),
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+        raw = response.content[0].text.strip().lower() if response.content else ""
+        tipo = raw if raw in PLAN_TYPES else "mueble_general"
+        logger.info(f"[PASS-2] Tipo de plano para {plano_id!r}: {tipo!r} (raw={raw!r})")
+        return tipo
+
+    except Exception as e:
+        logger.warning(f"[PASS-2] Error clasificando plano: {e}")
+        return "mueble_general"
+
+
+def _analyze_armario_plan(
+    client: anthropic.Anthropic,
+    image_base64: str,
+    media_type: str,
+    view_codes: List[str],
+    plano_id: str,
+    few_shot_examples: Optional[List] = None,
+) -> PlanoAnalizado:
+    """Pasada específica para planos de armario: extrae módulos, puertas e items interiores."""
+
+    if view_codes:
+        codes_ctx = (
+            f"Las referencias de armario en este plano son: {', '.join(view_codes)}.\n"
+            "Analiza CADA referencia por separado."
+        )
+    else:
+        codes_ctx = "No se detectaron referencias. Analiza todo el plano como un único armario con ref 'SIN-REF'."
+
+    pdf_ctx = (
+        "IMPORTANTE: Este PDF tiene varias páginas. Analiza TODAS las páginas "
+        "y extrae los armarios de cada una.\n\n"
+    ) if media_type == "application/pdf" else ""
+
+    prompt = f"""<instructions>
+{pdf_ctx}{codes_ctx}
+
+Para CADA referencia/armario extrae en JSON dentro de <output_format>:
+{{
+  "tipo_plano": "armario",
+  "armarios": [
+    {{
+      "ref": "A01",
+      "modulos": [
+        {{
+          "tipo": "ropa larga",
+          "ancho_cm": 60.0,
+          "alto_cm": 240.0,
+          "fondo_cm": 60.0,
+          "cantidad": 1,
+          "notas": ""
+        }}
+      ],
+      "puertas": [
+        {{
+          "tipo": "corredera",
+          "ancho_cm": 120.0,
+          "alto_cm": 240.0,
+          "acabado": "blanco mate",
+          "cantidad": 1,
+          "notas": ""
+        }}
+      ],
+      "items_interiores": [
+        {{"tipo": "cajón suave cierre", "cantidad": 3, "notas": ""}},
+        {{"tipo": "barra perchero", "cantidad": 1, "notas": ""}}
+      ]
+    }}
+  ],
+  "confidence_score": 0.9
+}}
+
+REGLAS:
+- "modulos": las partes del cuerpo del armario (ropa larga, zapatero, rinconero, baldas, cajones integrados…). Incluye SIEMPRE ancho y alto en cm.
+- "puertas": todas las puertas visibles. Incluye tipo (corredera/abatible/batiente), dimensiones y acabado.
+- "items_interiores": accesorios (cajón, barra, LED, espejo, bandeja, zapatero extraíble…). Si no hay, lista vacía.
+- Dimensiones SIEMPRE como número. Si no se ve claramente: 0.0.
+- "notas" → máx. 5 palabras o cadena vacía.
+- Nada fuera de <raw_reasoning> y <output_format>.
+
+Antes del JSON escribe en <raw_reasoning> qué ves en cada sección (máx. 60 palabras).
+</instructions>
+"""
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=8192,
+            system=SYSTEM_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": [
+                    _make_file_block(image_base64, media_type),
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+
+        response_text = "".join(b.text for b in response.content if b.type == "text")
+        logger.debug(f"[ARMARIO] Respuesta {plano_id!r}:\n{response_text[:800]}")
+
+        raw_reasoning = ""
+        if "<raw_reasoning>" in response_text and "</raw_reasoning>" in response_text:
+            raw_reasoning = response_text.split("<raw_reasoning>")[1].split("</raw_reasoning>")[0].strip()
+
+        json_block = _extract_json_block(response_text)
+
+        try:
+            data = json.loads(json_block)
+        except json.JSONDecodeError as e:
+            _log_error(plano_id, "JSONDecodeError_armario", e, raw_text=json_block)
+            return PlanoAnalizado(
+                plano_id=plano_id, tipo_plano="armario",
+                armarios=[], confidence_score=0.0,
+                raw_reasoning=raw_reasoning,
+                error=f"JSON parse error: {e}"
+            )
+
+        armarios_raw = data.get("armarios", [])
+        armarios: List[AnalisisArmario] = []
+        for a in armarios_raw:
+            ref = a.get("ref", "SIN-REF")
+            modulos = [
+                ModuloArmario(ref=ref, **{k: v for k, v in m.items() if k != "ref"})
+                for m in a.get("modulos", [])
+            ]
+            puertas = [
+                PuertaArmario(ref=ref, **{k: v for k, v in p.items() if k != "ref"})
+                for p in a.get("puertas", [])
+            ]
+            items = [
+                ItemInteriorArmario(ref=ref, **{k: v for k, v in i.items() if k != "ref"})
+                for i in a.get("items_interiores", [])
+            ]
+            armarios.append(AnalisisArmario(ref=ref, modulos=modulos, puertas=puertas, items_interiores=items))
+
+        logger.info(f"[ARMARIO] {plano_id!r}: {len(armarios)} armarios, "
+                    f"{sum(len(a.modulos) for a in armarios)} módulos, "
+                    f"{sum(len(a.puertas) for a in armarios)} puertas, "
+                    f"{sum(len(a.items_interiores) for a in armarios)} items")
+
+        return PlanoAnalizado(
+            plano_id=plano_id,
+            tipo_plano="armario",
+            armarios=armarios,
+            confidence_score=float(data.get("confidence_score", 0.8)),
+            raw_reasoning=raw_reasoning,
+        )
+
+    except anthropic.APIStatusError as e:
+        _log_error(plano_id, "AnthropicAPIStatusError", e)
+        return PlanoAnalizado(plano_id=plano_id, tipo_plano="armario", armarios=[], confidence_score=0.0, raw_reasoning="", error=str(e))
+    except Exception as e:
+        _log_error(plano_id, "AnthropicGeneralError_armario", e)
+        return PlanoAnalizado(plano_id=plano_id, tipo_plano="armario", armarios=[], confidence_score=0.0, raw_reasoning="", error=str(e))
 
 
 def _build_examples_section(examples: List[List[Dict[str, Any]]]) -> str:
@@ -150,27 +353,34 @@ def analyze_plan(
     file_total: int = 1,
 ) -> PlanoAnalizado:
     """
-    Analiza una imagen de plano carpintería en dos pasadas:
-      1. Detecta los códigos de vista (A01, B02…) del plano.
-      2. Extrae componentes asignando cada uno a su código de vista.
+    Analiza un plano de carpintería en tres pasadas:
+      1. Detecta códigos de vista.
+      2. Clasifica el tipo de plano (armario vs. otros).
+      3a. Si armario: extrae módulos, puertas e items interiores.
+      3b. Si otro tipo: extrae componentes genéricos.
     """
     try:
         base64.b64decode(image_base64, validate=True)
     except Exception as e:
         _log_error(plano_id, "CorruptImageError", e)
         return PlanoAnalizado(
-            plano_id=plano_id,
-            componentes=[],
-            confidence_score=0.0,
-            raw_reasoning="",
-            error=f"Corrupt or invalid base64 image: {str(e)}"
+            plano_id=plano_id, componentes=[], confidence_score=0.0,
+            raw_reasoning="", error=f"Corrupt or invalid base64: {str(e)}"
         )
 
     client = anthropic.Anthropic()
 
-    # ── PASADA 1: detectar códigos de vista ──────────────────────────────────
+    # ── PASADA 1: códigos de vista ────────────────────────────────────────────
     view_codes = _detect_view_codes(client, image_base64, media_type, plano_id)
 
+    # ── PASADA 2: clasificar tipo de plano ────────────────────────────────────
+    tipo_plano = _classify_plan_type(client, image_base64, media_type, plano_id)
+
+    # ── PASADA 3: extracción específica ───────────────────────────────────────
+    if tipo_plano == "armario":
+        return _analyze_armario_plan(client, image_base64, media_type, view_codes, plano_id, few_shot_examples)
+
+    # ── PASADA 3 (generic): extracción genérica ───────────────────────────────
     if view_codes:
         codes_context = (
             f"Los códigos de vista que hay en este plano son: {', '.join(view_codes)}.\n"
@@ -182,7 +392,6 @@ def analyze_plan(
         codes_context = "No se han detectado códigos de vista en el plano. Usa \"SIN-REF\" en todos los componentes."
         ref_rule = "SIN-REF"
 
-    # ── PASADA 2: extraer componentes ────────────────────────────────────────
     examples_block = _build_examples_section(few_shot_examples or [])
 
     if media_type == "application/pdf":
@@ -239,50 +448,31 @@ Notas adicionales del cliente: {notes if notes else "Ninguna"}
             model="claude-sonnet-4-6",
             max_tokens=8192,
             system=SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        _make_file_block(image_base64, media_type),
-                        {"type": "text", "text": prompt_content},
-                    ],
-                }
-            ],
+            messages=[{
+                "role": "user",
+                "content": [
+                    _make_file_block(image_base64, media_type),
+                    {"type": "text", "text": prompt_content},
+                ],
+            }],
         )
 
-        response_text = ""
-        for block in response.content:
-            if block.type == "text":
-                response_text += block.text
-
-        logger.debug(f"[PASS-2] Respuesta completa plano {plano_id!r}:\n{response_text[:1000]}")
+        response_text = "".join(b.text for b in response.content if b.type == "text")
+        logger.debug(f"[PASS-3] Respuesta {plano_id!r}:\n{response_text[:1000]}")
 
         raw_reasoning = ""
         if "<raw_reasoning>" in response_text and "</raw_reasoning>" in response_text:
             raw_reasoning = response_text.split("<raw_reasoning>")[1].split("</raw_reasoning>")[0].strip()
 
-        json_content = ""
-        if "{" in response_text and "}" in response_text:
-            if "<output_format>" in response_text and "</output_format>" in response_text:
-                json_content = response_text.split("<output_format>")[1].split("</output_format>")[0].strip()
-
-            if json_content.startswith("```json"):
-                json_content = json_content[7:]
-            if json_content.endswith("```"):
-                json_content = json_content[:-3]
-            json_content = json_content.strip()
-
-            if not json_content:
-                start_idx = response_text.find("{")
-                end_idx = response_text.rfind("}") + 1
-                json_content = response_text[start_idx:end_idx]
+        json_block = _extract_json_block(response_text)
 
         try:
-            result = json.loads(json_content)
+            result = json.loads(json_block)
         except json.JSONDecodeError as e:
-            result = _repair_truncated_json(json_content, plano_id, e)
+            result = _repair_truncated_json(json_block, plano_id, e)
 
         result["plano_id"] = plano_id
+        result["tipo_plano"] = tipo_plano
         result["raw_reasoning"] = raw_reasoning
 
         try:
@@ -291,9 +481,8 @@ Notas adicionales del cliente: {notes if notes else "Ninguna"}
         except Exception as e:
             _log_error(plano_id, "PydanticValidationError", e)
             return PlanoAnalizado(
-                plano_id=plano_id,
-                componentes=[],
-                confidence_score=0.0,
+                plano_id=plano_id, tipo_plano=tipo_plano,
+                componentes=[], confidence_score=0.0,
                 raw_reasoning=raw_reasoning,
                 error=f"Validation error: {str(e)}"
             )
