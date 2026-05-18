@@ -55,6 +55,19 @@ Tu objetivo: extraer cada componente con sus dimensiones, material, acabado y el
 """
 
 
+def _make_file_block(image_base64: str, media_type: str) -> dict:
+    """Returns the correct API content block for images or PDFs."""
+    if media_type == "application/pdf":
+        return {
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": image_base64},
+        }
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": media_type, "data": image_base64},
+    }
+
+
 def _detect_view_codes(
     client: anthropic.Anthropic,
     image_base64: str,
@@ -85,10 +98,7 @@ Si no encuentras ninguno, responde exactamente: NINGUNO"""
             messages=[{
                 "role": "user",
                 "content": [
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": media_type, "data": image_base64},
-                    },
+                    _make_file_block(image_base64, media_type),
                     {"type": "text", "text": prompt},
                 ],
             }],
@@ -214,14 +224,7 @@ Notas adicionales del cliente: {notes if notes else "Ninguna"}
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": image_base64,
-                            },
-                        },
+                        _make_file_block(image_base64, media_type),
                         {"type": "text", "text": prompt_content},
                     ],
                 }

@@ -1,9 +1,13 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Maximize2, X, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText, Maximize2, X, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
+
+function isPdf(url: string) {
+  return url.toLowerCase().includes(".pdf");
+}
 
 interface PlanViewerProps {
   imageUrls?: string[];
@@ -60,6 +64,14 @@ export default function PlanViewer({ imageUrls, imageUrl }: PlanViewerProps) {
 
       <div className="relative bg-gray-50 border rounded overflow-hidden">
         {current ? (
+          isPdf(current) ? (
+            <iframe
+              src={current}
+              title={`Plano ${index + 1}`}
+              className="w-full border-0"
+              style={{ height: "500px" }}
+            />
+          ) : (
           <div
             className="relative cursor-crosshair"
             onMouseEnter={(e) => {
@@ -110,6 +122,7 @@ export default function PlanViewer({ imageUrls, imageUrl }: PlanViewerProps) {
               />
             )}
           </div>
+          )
         ) : (
           <div className="min-h-[300px] flex items-center justify-center">
             <p className="text-gray-500">Imagen no disponible</p>
@@ -155,8 +168,21 @@ export default function PlanViewer({ imageUrls, imageUrl }: PlanViewerProps) {
 
       {/* dot indicators */}
       {total > 1 && (
-        <div className="flex justify-center gap-1.5 mt-2">
-          {urls.map((_, i) => (
+        <div className="flex justify-center gap-1.5 mt-2 items-center">
+          {urls.map((url, i) => (
+            isPdf(url) ? (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setIndex(i)}
+                className={`flex items-center justify-center w-5 h-5 rounded transition-colors ${
+                  i === index ? "text-gray-700" : "text-gray-300 hover:text-gray-500"
+                }`}
+                aria-label={`Ir al plano PDF ${i + 1}`}
+              >
+                <FileText className="w-4 h-4" />
+              </button>
+            ) : (
             <button
               key={i}
               type="button"
@@ -168,6 +194,7 @@ export default function PlanViewer({ imageUrls, imageUrl }: PlanViewerProps) {
               }`}
               aria-label={`Ir al plano ${i + 1}`}
             />
+            )
           ))}
         </div>
       )}
@@ -190,6 +217,13 @@ export default function PlanViewer({ imageUrls, imageUrl }: PlanViewerProps) {
           </div>
 
           <div className="w-full h-full flex items-center justify-center">
+            {isPdf(current) ? (
+              <iframe
+                src={current}
+                title={`Plano ampliado ${index + 1}`}
+                className="w-full h-full border-0"
+              />
+            ) : (
             <TransformWrapper
               initialScale={1}
               minScale={0.5}
@@ -238,6 +272,7 @@ export default function PlanViewer({ imageUrls, imageUrl }: PlanViewerProps) {
                 </>
               )}
             </TransformWrapper>
+            )}
           </div>
 
           {/* Navigation Arrows for Modal */}
