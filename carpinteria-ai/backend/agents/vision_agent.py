@@ -78,13 +78,17 @@ def _detect_view_codes(
     Primera pasada: extrae SOLO los códigos de vista del plano.
     Tarea única y simple para maximizar precisión.
     """
-    prompt = """Mira este plano técnico de carpintería.
+    pdf_ctx = "Este archivo PDF puede tener VARIAS PÁGINAS. Revisa TODAS las páginas antes de responder.\n\n" if media_type == "application/pdf" else ""
 
-Busca los CÓDIGOS DE REFERENCIA de cada armario o sección. Aparecen de dos formas:
-1. Al final del título de sección, tras un guión: "ARMARIO DORMITORIO 1 — A03"  →  código: A03
-2. Como etiqueta corta directamente sobre una vista: "A05", "A06"
+    prompt = f"""{pdf_ctx}Mira este plano técnico de carpintería.
 
-El formato es siempre: una letra mayúscula seguida de dos dígitos (A03, A04, A05, A06...).
+Busca los CÓDIGOS DE REFERENCIA de cada armario, mueble o sección. Pueden aparecer en cualquier parte del plano:
+1. Al final del título de sección: "ARMARIO DORMITORIO 1 — A03"  →  código: A03
+2. Como etiqueta corta sobre un alzado: "A05", "B02"
+3. En el cajetín o leyenda del plano
+4. Sobre o junto a la propia vista dibujada
+
+El formato más habitual es letra(s) mayúscula(s) seguida de número(s), pero acepta cualquier variante que identifique claramente una vista o mueble: A03, A-03, B01, C02, ARM-1, VEST2, etc.
 
 Devuelve ÚNICAMENTE los códigos encontrados, separados por comas, sin ningún otro texto.
 Ejemplo de respuesta válida: A03,A04,A05,A06
@@ -142,6 +146,8 @@ def analyze_plan(
     notes: Optional[str] = None,
     plano_id: str = "unknown",
     few_shot_examples: Optional[List[List[Dict[str, Any]]]] = None,
+    file_index: int = 1,
+    file_total: int = 1,
 ) -> PlanoAnalizado:
     """
     Analiza una imagen de plano carpintería en dos pasadas:
@@ -179,9 +185,22 @@ def analyze_plan(
     # ── PASADA 2: extraer componentes ────────────────────────────────────────
     examples_block = _build_examples_section(few_shot_examples or [])
 
+    if media_type == "application/pdf":
+        scope_ctx = (
+            "IMPORTANTE: Este PDF puede contener VARIAS PÁGINAS/HOJAS. "
+            "Analiza CADA PÁGINA por separado y extrae TODOS los componentes visibles en TODAS las hojas. "
+            "No omitas ningún mueble ni pieza aunque aparezca en páginas distintas."
+        )
+    elif file_total > 1:
+        scope_ctx = f"Esta es la hoja {file_index} de {file_total}. Extrae todos los componentes visibles en esta imagen."
+    else:
+        scope_ctx = "Extrae todos los componentes visibles en el plano."
+
     prompt_content = f"""
 <instructions>
 {codes_context}
+
+{scope_ctx}
 
 Extrae todos los componentes del plano con el siguiente JSON estricto dentro de <output_format>:
 {{

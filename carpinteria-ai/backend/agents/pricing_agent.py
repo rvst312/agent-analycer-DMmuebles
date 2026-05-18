@@ -44,6 +44,9 @@ def calculate_pricing(plano: PlanoAnalizado, cliente_id: str, on_line_added=None
     total = 0.0
     tipo_counters: dict = {}
 
+    # Tipos que se calculan por m² (área = ancho × largo)
+    _AREA_TIPOS = {"tablero", "puerta", "estante", "armario", "cajon", "cajón"}
+
     for comp in plano.componentes:
         # 1. Convertir dimensiones a metros
         ancho_m = comp.ancho_cm / 100.0
@@ -109,13 +112,17 @@ def calculate_pricing(plano: PlanoAnalizado, cliente_id: str, on_line_added=None
             logger.info(f"Sin precio RAG para '{query_variants[0]}', marcando como pendiente")
         
         # 4. Calcular coste base por unidad
-        # Area en m2 * precio por m2
-        coste_material = ancho_m * largo_m * precio_unitario
-        
-        # Para herrajes o barras, el precio podría no ser por m2, pero la fórmula del issue dice:
-        # C_total = (ancho_m × largo_m × precio_unitario) + k_labor
-        # Asumiremos esta fórmula para todos, si es por unidad, el ancho y largo podrían ser 1, pero seguiremos la fórmula pedida.
-        
+        # Para componentes de área (tablero, puerta, etc.): ancho_m × largo_m × precio_unitario
+        # Si las dimensiones son 0 y el tipo requiere área, no se puede calcular → pendiente
+        requires_area = tipo_str.lower() in _AREA_TIPOS
+        area_m2 = ancho_m * largo_m
+
+        if requires_area and area_m2 == 0.0 and not precio_pendiente:
+            precio_pendiente = True
+            logger.info(f"Marcando pendiente: '{tipo_str}' sin dimensiones (ancho={comp.ancho_cm}, largo={comp.largo_cm})")
+
+        coste_material = area_m2 * precio_unitario
+
         k_labor = get_k_labor(comp.tipo.value)
         coste_unitario_total = coste_material + k_labor
         

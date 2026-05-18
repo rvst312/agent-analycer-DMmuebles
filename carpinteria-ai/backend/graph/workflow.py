@@ -111,6 +111,8 @@ async def vision_analysis(state: GraphState):
             media_type=media_type,
             plano_id=plano_id,
             few_shot_examples=few_shot_examples,
+            file_index=idx + 1,
+            file_total=len(file_paths),
         )
 
         if result.error:
