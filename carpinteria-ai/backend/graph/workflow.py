@@ -93,9 +93,12 @@ async def vision_analysis(state: GraphState):
         logger.info(f"vision_analysis: {len(few_shot_examples)} few-shot examples para cliente={cliente_id}")
 
     all_componentes: list = []
+    all_armarios: list = []
     reasoning_parts: list = []
     confidence_sum = 0.0
     errors: list = []
+    tipo_plano = "general"
+    processed = 0
 
     for idx, file_path in enumerate(file_paths):
         media_type = _resolve_media_type(file_path, content_types[idx] if idx < len(content_types) else None)
@@ -120,23 +123,33 @@ async def vision_analysis(state: GraphState):
             errors.append(f"Archivo {idx+1}: {result.error}")
             continue
 
-        logger.info(f"vision_analysis: archivo {idx+1}/{len(file_paths)} → {len(result.componentes)} componentes detectados")
-        all_componentes.extend(result.componentes)
+        tipo_plano = result.tipo_plano
+
+        if result.tipo_plano == "armario" and result.armarios:
+            logger.info(f"vision_analysis: archivo {idx+1}/{len(file_paths)} → {len(result.armarios)} armarios detectados")
+            all_armarios.extend(result.armarios)
+        else:
+            logger.info(f"vision_analysis: archivo {idx+1}/{len(file_paths)} → {len(result.componentes)} componentes detectados")
+            all_componentes.extend(result.componentes)
+
         reasoning_parts.append(f"[Plano {idx+1}] {result.raw_reasoning}")
         confidence_sum += result.confidence_score
+        processed += 1
 
-    if not all_componentes:
+    if not all_componentes and not all_armarios:
         error_msg = "; ".join(errors) if errors else "No se detectaron componentes en ninguna imagen"
         return {"status": "error", "error": error_msg, "plano_id": plano_id}
 
-    avg_confidence = confidence_sum / len(file_paths)
+    avg_confidence = confidence_sum / max(processed, 1)
     merged_reasoning = " | ".join(reasoning_parts)
 
     import json as _json
     from api.schemas.estimate import PlanoAnalizado as _PA
     merged = _PA(
         plano_id=plano_id,
+        tipo_plano=tipo_plano,
         componentes=all_componentes,
+        armarios=all_armarios if all_armarios else None,
         confidence_score=round(avg_confidence, 3),
         raw_reasoning=merged_reasoning,
     )
