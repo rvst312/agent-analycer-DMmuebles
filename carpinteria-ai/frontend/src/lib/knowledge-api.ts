@@ -47,6 +47,25 @@ export const knowledgeApi = {
     return response.data;
   },
 
+  getCategories: async (): Promise<string[]> => {
+    const token = getAdminToken();
+    const response = await apiClient.get('/knowledge/categories', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  deleteAll: async (categoria?: string): Promise<{ status: string; deleted: number }> => {
+    const token = getAdminToken();
+    const params: Record<string, string> = {};
+    if (categoria) params.categoria = categoria;
+    const response = await apiClient.delete('/knowledge/all', {
+      headers: { Authorization: `Bearer ${token}` },
+      params,
+    });
+    return response.data;
+  },
+
   bulkDelete: async (ids: string[]): Promise<{ status: string; deleted: number }> => {
     const token = getAdminToken();
     const response = await apiClient.delete('/knowledge/bulk', {

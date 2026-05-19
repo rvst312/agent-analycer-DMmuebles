@@ -56,39 +56,53 @@ def upsert_precio(id: str, texto: str, metadatos: dict) -> None:
 
 def get_precios(skip: int = 0, limit: int = 10, activos_only: bool = False, search: Optional[str] = None, categoria: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Lista los precios con paginación. Opcionalmente filtra por activo=True, búsqueda por texto y categoría.
+    Lista los precios con paginación. Cuando hay búsqueda usa query semántico para mayor precisión.
     """
-    where_clause = {}
     conditions = []
-    
     if activos_only:
         conditions.append({"activo": True})
-    
     if categoria:
         conditions.append({"categoria": categoria})
-        
-    if conditions:
-        if len(conditions) == 1:
-            where_clause = conditions[0]
-        else:
-            where_clause = {"$and": conditions}
+
+    if len(conditions) == 1:
+        where_clause = conditions[0]
+    elif len(conditions) > 1:
+        where_clause = {"$and": conditions}
     else:
         where_clause = None
 
-    where_document = {"$contains": search} if search else None
+    if search:
+        try:
+            total = precios_collection.count()
+            if total == 0:
+                return []
+            # Fetch enough results to support skip+limit slicing
+            n = min(max(skip + limit, 100), total)
+            query_kwargs: Dict[str, Any] = {
+                "query_texts": [search],
+                "n_results": n,
+                "include": ["documents", "metadatas"],
+            }
+            if where_clause:
+                query_kwargs["where"] = where_clause
+            results = precios_collection.query(**query_kwargs)
+        except Exception:
+            return []
 
-    # ChromaDB get
-    kwargs = {
-        "limit": limit,
-        "offset": skip,
-    }
+        ids   = (results.get("ids")       or [[]])[0]
+        docs  = (results.get("documents") or [[]])[0]
+        metas = (results.get("metadatas") or [[]])[0]
+        ids   = ids  [skip: skip + limit]
+        docs  = docs [skip: skip + limit]
+        metas = metas[skip: skip + limit]
+        return [{"id": ids[i], "documento": docs[i], "metadatos": metas[i]} for i in range(len(ids))]
+
+    # Sin búsqueda: paginación estándar con get()
+    kwargs: Dict[str, Any] = {"limit": limit, "offset": skip}
     if where_clause:
         kwargs["where"] = where_clause
-    if where_document:
-        kwargs["where_document"] = where_document
 
     results = precios_collection.get(**kwargs)
-    
     formatted_results = []
     if results and results.get("ids"):
         for i in range(len(results["ids"])):
@@ -98,6 +112,43 @@ def get_precios(skip: int = 0, limit: int = 10, activos_only: bool = False, sear
                 "metadatos": results["metadatas"][i] if results.get("metadatas") else {}
             })
     return formatted_results
+
+
+def get_unique_categories() -> List[str]:
+    """Devuelve lista ordenada de categorías únicas en la colección."""
+    categories: set = set()
+    batch = 500
+    offset = 0
+    while True:
+        results = precios_collection.get(limit=batch, offset=offset, include=["metadatas"])
+        ids = results.get("ids", [])
+        if not ids:
+            break
+        for meta in results.get("metadatas", []) or []:
+            cat = meta.get("categoria", "")
+            if cat:
+                categories.add(str(cat))
+        offset += batch
+        if len(ids) < batch:
+            break
+    return sorted(categories)
+
+
+def delete_all_precios(categoria: Optional[str] = None) -> int:
+    """Elimina todos los precios, opcionalmente filtrados por categoría. Devuelve cantidad eliminada."""
+    total = 0
+    batch = 500
+    while True:
+        kwargs: Dict[str, Any] = {"limit": batch, "include": []}
+        if categoria:
+            kwargs["where"] = {"categoria": categoria}
+        results = precios_collection.get(**kwargs)
+        ids = results.get("ids", [])
+        if not ids:
+            break
+        precios_collection.delete(ids=ids)
+        total += len(ids)
+    return total
 
 def update_precio_metadata(id: str, metadatos_update: dict) -> None:
     """

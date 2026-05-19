@@ -13,7 +13,9 @@ from rag.embeddings import (
     upsert_precio,
     get_precios,
     update_precio_metadata,
-    delete_precio_logico
+    delete_precio_logico,
+    get_unique_categories,
+    delete_all_precios,
 )
 
 router = APIRouter(
@@ -21,6 +23,14 @@ router = APIRouter(
     tags=["knowledge"],
     dependencies=[Depends(verify_admin_token)]
 )
+
+@router.get("/categories", response_model=List[str])
+def get_categories():
+    """Devuelve las categorías únicas existentes en la base de precios."""
+    try:
+        return get_unique_categories()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("", response_model=List[PrecioResponse])
 def get_knowledge(
@@ -96,6 +106,17 @@ def bulk_delete_knowledge(payload: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.delete("/all", response_model=dict)
+def delete_all_knowledge(
+    categoria: str = Query(None, description="Si se indica, elimina solo los de esa categoría")
+):
+    """Elimina todos los precios de la base, opcionalmente filtrados por categoría."""
+    try:
+        deleted = delete_all_precios(categoria=categoria or None)
+        return {"status": "success", "deleted": deleted}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{precio_id}", response_model=dict)
 def delete_knowledge(precio_id: str):
