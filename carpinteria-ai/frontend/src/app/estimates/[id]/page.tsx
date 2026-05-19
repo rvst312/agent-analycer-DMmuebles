@@ -5,10 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import PlanViewer from "@/components/PlanViewer";
 import EstimateBreakdown from "@/components/EstimateBreakdown";
 import ComponentsEditor from "@/components/ComponentsEditor";
+import KbSearchModal from "@/components/KbSearchModal";
 import { EstimateDetail, LineaPresupuesto, PlanoAnalizado, PriceCorrection, SSEEvent } from "@/types/estimate";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { BrainCircuit, CheckCircle2, Circle, Loader2 } from "lucide-react";
+import { BrainCircuit, CheckCircle2, Circle, Loader2, Plus } from "lucide-react";
 import { getToken } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -69,6 +70,7 @@ export default function EstimatePage() {
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showLearnModal, setShowLearnModal] = useState(false);
+  const [showKbModal, setShowKbModal] = useState(false);
   const [motivoRechazo, setMotivoRechazo] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [planoAnalizado, setPlanoAnalizado] = useState<PlanoAnalizado | null>(null);
@@ -102,6 +104,11 @@ export default function EstimatePage() {
   };
 
   const handleLineasChange = (nl: LineaPresupuesto[]) => { setLineas(nl); recalc(nl); };
+
+  const handleAddKbLine = (linea: LineaPresupuesto) => {
+    const next = [...lineas, linea];
+    handleLineasChange(next);
+  };
 
   const handleDiscountsChange = ({ subtotal: s, iva: i, total: t }: { subtotal: number; iva: number; total: number }) => {
     setSubtotal(s);
@@ -347,6 +354,11 @@ export default function EstimatePage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Presupuesto #{estimateId.substring(0, 8)}</h1>
           {estimate?.cliente_id && <p className="text-sm text-gray-500 mt-0.5">Cliente: {estimate.cliente_id}</p>}
+          {estimate?.plano_analizado?.tipo_plano && estimate.plano_analizado.tipo_plano !== "general" && (
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 mt-1">
+              {estimate.plano_analizado.tipo_plano.replace(/_/g, " ")}
+            </span>
+          )}
         </div>
         <span className={`px-3 py-1 rounded-full text-sm font-medium flex items-center gap-1.5 ${
           loading || isProcessing      ? "bg-blue-100 text-blue-700" :
@@ -379,10 +391,21 @@ export default function EstimatePage() {
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-700">Líneas del presupuesto</h2>
+              <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowKbModal(true)}
+                className="gap-1 text-xs h-7"
+              >
+                <Plus className="w-3 h-3" />
+                Añadir de KB
+              </Button>
               <span className="text-xs text-gray-400 flex items-center gap-1">
                 {isProcessing && lineas.length === 0 && <><Loader2 className="w-3 h-3 animate-spin" /> Calculando…</>}
                 {lineas.length > 0 && `${lineas.length} ítem${lineas.length !== 1 ? "s" : ""}`}
               </span>
+              </div>
             </div>
 
             {lineas.length === 0 && !isProcessing ? (
@@ -446,6 +469,15 @@ export default function EstimatePage() {
           )}
         </div>
       </div>
+
+      {/* KB Search Modal */}
+      {showKbModal && (
+        <KbSearchModal
+          clienteId={estimate?.cliente_id || "general"}
+          onAdd={handleAddKbLine}
+          onClose={() => setShowKbModal(false)}
+        />
+      )}
 
       {/* Approve Modal */}
       {showApproveModal && (

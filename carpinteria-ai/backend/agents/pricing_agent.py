@@ -35,33 +35,41 @@ def _gen_codigo(tipo: str, counters: dict) -> str:
     return f"{prefix}-{counters[prefix]:03d}"
 
 
-def _rag_lookup(query_variants: List[str], cliente_id: str) -> tuple[float, bool, float]:
+def _rag_lookup(query_variants: List[str], cliente_id: str) -> tuple[float, bool, float, str]:
     """
-    Returns (precio_unitario, precio_pendiente, best_distance).
-    Tries each query variant against cliente and 'general' collections.
+    Returns (precio_unitario, precio_pendiente, best_distance, kb_descripcion).
+    kb_descripcion is the KB item's material + documento text when found, else "".
     """
     precio_unitario = 0.0
     precio_pendiente = True
     mejor_distancia = float("inf")
+    kb_descripcion = ""
 
     for query_text in query_variants:
         for client_key in dict.fromkeys([cliente_id, "general"]):
             resultados = query_precios(query_text, client_key, n_results=5)
             for res in resultados:
                 dist = res.get("distancia", float("inf"))
-                if dist < mejor_distancia and dist < 1.8:
+                if dist < mejor_distancia and dist < 1.0:
                     metadatos = res.get("metadatos", {})
                     if "precio_unitario" in metadatos:
                         try:
                             precio_unitario = float(metadatos["precio_unitario"])
                             mejor_distancia = dist
                             precio_pendiente = False
+                            # Build description from KB item
+                            material = metadatos.get("material", "")
+                            documento = res.get("documento", "")
+                            unidad = metadatos.get("unidad", "")
+                            kb_descripcion = material or documento
+                            if unidad:
+                                kb_descripcion += f" ({unidad})"
                         except (ValueError, TypeError):
                             pass
         if not precio_pendiente:
             break
 
-    return precio_unitario, precio_pendiente, mejor_distancia
+    return precio_unitario, precio_pendiente, mejor_distancia, kb_descripcion
 
 
 # ── Armario pricing ──────────────────────────────────────────────────────────
@@ -89,7 +97,7 @@ def _price_armarios(
                 f"módulo {mod.tipo} armario",
                 f"módulo armario {mod.tipo}",
             ]
-            precio, pendiente, dist = _rag_lookup(queries, cliente_id)
+            precio, pendiente, dist, kb_desc = _rag_lookup(queries, cliente_id)
 
             if not pendiente:
                 logger.info(f"[MOD] {ref} '{mod.tipo}' {mod.ancho_cm}x{mod.alto_cm}cm → {precio:.2f}€ (dist={dist:.3f})")
@@ -100,11 +108,18 @@ def _price_armarios(
             if not pendiente:
                 total += subtotal
 
-            desc = f"Módulo {mod.tipo} {mod.ancho_cm}x{mod.alto_cm}cm"
-            if mod.fondo_cm:
-                desc += f" fondo {mod.fondo_cm}cm"
+            if kb_desc:
+                desc = kb_desc
+                dim = f"{mod.ancho_cm}×{mod.alto_cm}cm"
+                if mod.fondo_cm:
+                    dim += f" f{mod.fondo_cm}cm"
+                desc += f" — {dim}"
+            else:
+                desc = f"Módulo {mod.tipo} {mod.ancho_cm}×{mod.alto_cm}cm"
+                if mod.fondo_cm:
+                    desc += f" fondo {mod.fondo_cm}cm"
             if mod.notas:
-                desc += f" — {mod.notas}"
+                desc += f" ({mod.notas})"
 
             linea = LineaPresupuesto(
                 codigo=_gen_codigo("modulo", counters),
@@ -128,7 +143,7 @@ def _price_armarios(
                 f"puerta armario {puerta.tipo}",
                 f"puerta {puerta.tipo} armario",
             ]
-            precio, pendiente, dist = _rag_lookup(queries, cliente_id)
+            precio, pendiente, dist, kb_desc = _rag_lookup(queries, cliente_id)
 
             if not pendiente:
                 logger.info(f"[PTA] {ref} puerta {puerta.tipo} {puerta.ancho_cm}x{puerta.alto_cm}cm → {precio:.2f}€ (dist={dist:.3f})")
@@ -137,9 +152,13 @@ def _price_armarios(
             if not pendiente:
                 total += subtotal
 
-            desc = f"Puerta {puerta.tipo} {puerta.ancho_cm}x{puerta.alto_cm}cm {puerta.acabado}".strip()
+            if kb_desc:
+                desc = kb_desc
+                desc += f" — {puerta.ancho_cm}×{puerta.alto_cm}cm"
+            else:
+                desc = f"Puerta {puerta.tipo} {puerta.ancho_cm}×{puerta.alto_cm}cm {puerta.acabado}".strip()
             if puerta.notas:
-                desc += f" — {puerta.notas}"
+                desc += f" ({puerta.notas})"
 
             linea = LineaPresupuesto(
                 codigo=_gen_codigo("puerta_armario", counters),
@@ -161,7 +180,7 @@ def _price_armarios(
                 f"{item.tipo} armario",
                 f"{item.tipo}",
             ]
-            precio, pendiente, dist = _rag_lookup(queries, cliente_id)
+            precio, pendiente, dist, kb_desc = _rag_lookup(queries, cliente_id)
 
             if not pendiente:
                 logger.info(f"[ITM] {ref} '{item.tipo}' → {precio:.2f}€ (dist={dist:.3f})")
@@ -170,9 +189,9 @@ def _price_armarios(
             if not pendiente:
                 total += subtotal
 
-            desc = f"{item.tipo.capitalize()}"
+            desc = kb_desc if kb_desc else item.tipo.capitalize()
             if item.notas:
-                desc += f" — {item.notas}"
+                desc += f" ({item.notas})"
 
             linea = LineaPresupuesto(
                 codigo=_gen_codigo("item", counters),
@@ -230,13 +249,14 @@ def _price_generic(
             f"{catalog_hint}",
         ]
 
-        precio_unitario, precio_pendiente, mejor_distancia = _rag_lookup(query_variants, cliente_id)
+        precio_unitario, precio_pendiente, mejor_distancia, kb_desc = _rag_lookup(query_variants, cliente_id)
 
         # Flag zero-dimension area components as pending
         requires_area = tipo_str.lower() in _AREA_TIPOS
         area_m2 = ancho_m * largo_m
         if requires_area and area_m2 == 0.0 and not precio_pendiente:
             precio_pendiente = True
+            kb_desc = ""
             logger.info(f"Pendiente: '{tipo_str}' sin dimensiones ({comp.ancho_cm}x{comp.largo_cm}cm)")
 
         if not precio_pendiente:
@@ -250,9 +270,14 @@ def _price_generic(
         if not precio_pendiente:
             total += subtotal
 
-        descripcion = f"{tipo_str.capitalize()} de {comp.material} {comp.acabado} ({comp.ancho_cm}x{comp.largo_cm}cm)"
+        if kb_desc:
+            descripcion = kb_desc
+            if comp.ancho_cm > 0 and comp.largo_cm > 0:
+                descripcion += f" — {comp.ancho_cm}×{comp.largo_cm}cm"
+        else:
+            descripcion = f"{tipo_str.capitalize()} de {comp.material} {comp.acabado} ({comp.ancho_cm}x{comp.largo_cm}cm)"
         if comp.notas:
-            descripcion += f" - {comp.notas}"
+            descripcion += f" ({comp.notas})"
 
         linea = LineaPresupuesto(
             codigo=_gen_codigo(tipo_str, tipo_counters),

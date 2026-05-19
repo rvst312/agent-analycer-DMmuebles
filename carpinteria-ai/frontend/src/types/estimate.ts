@@ -28,6 +28,7 @@ export interface ComponenteArmario {
 
 export interface PlanoAnalizado {
   plano_id: string;
+  tipo_plano?: string;
   componentes: ComponenteArmario[];
   confidence_score: number;
   raw_reasoning: string;

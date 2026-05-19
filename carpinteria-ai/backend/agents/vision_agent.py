@@ -137,6 +137,48 @@ Si no encuentras ninguno, responde exactamente: NINGUNO"""
         return []
 
 
+_TYPE_INSTRUCTIONS: dict = {
+    "puerta_paso": """\
+TIPO: Puertas de paso. Para cada puerta extrae:
+- tipo de hoja: "blindada" | "hueca" | "maciza" | "vidriada"
+- material y acabado de hoja y marco
+- ancho_cm × largo_cm (largo_cm = altura de la puerta)
+- herrajes (manilla, cerradura, bisagras) como componentes tipo="herraje"
+- premarco o marco como tipo="otro" con notas="premarco" o "marco"
+- cantidad por estancia si hay varias""",
+
+    "rodapie": """\
+TIPO: Rodapiés. Para cada zona/estancia extrae:
+- tipo="tablero" con material y acabado del rodapié
+- ancho_cm = altura del rodapié en cm (ej: 10cm)
+- largo_cm = metros lineales × 100 (ej: 5,2m → 520cm)
+- notas = nombre de la estancia o zona""",
+
+    "mueble_banio": """\
+TIPO: Muebles de baño. Extrae cada pieza por separado:
+- mueble bajo / módulo: tipo="tablero" con sus dimensiones
+- encimera / lavabo integrado: tipo="tablero", notas="encimera"
+- espejo o botiquín: tipo="otro", notas="espejo" o "botiquín"
+- iluminación LED: tipo="herraje", notas="LED"
+- acabado y color siempre""",
+
+    "panelado": """\
+TIPO: Panelados de pared. Extrae por zona/pared:
+- tipo="tablero" con material y acabado del panel
+- ancho_cm × largo_cm = dimensiones del panel o superficie total de la zona
+- notas = nombre de la pared o zona (ej: "pared norte")""",
+
+    "mueble_general": """\
+TIPO: Mueble a medida. Extrae cada módulo o cuerpo por separado:
+- baldas como tipo="estante"
+- cajones como tipo="cajon"
+- puertas como tipo="puerta"
+- barras como tipo="barra"
+- herrajes como tipo="herraje"
+Incluye siempre dimensiones y acabado.""",
+}
+
+
 def _classify_plan_type(
     client: anthropic.Anthropic,
     image_base64: str,
@@ -393,6 +435,7 @@ def analyze_plan(
         ref_rule = "SIN-REF"
 
     examples_block = _build_examples_section(few_shot_examples or [])
+    type_instructions = _TYPE_INSTRUCTIONS.get(tipo_plano, _TYPE_INSTRUCTIONS["mueble_general"])
 
     if media_type == "application/pdf":
         scope_ctx = (
@@ -408,6 +451,8 @@ def analyze_plan(
     prompt_content = f"""
 <instructions>
 {codes_context}
+
+{type_instructions}
 
 {scope_ctx}
 
