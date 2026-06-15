@@ -32,6 +32,7 @@ class GraphState(TypedDict):
     archivos_paths: Optional[list]                # todos los archivos subidos
     archivos_content_types: Optional[list]        # content-type de cada archivo
     cliente_id: Optional[str]
+    notas_contexto: Optional[str]                 # contexto del usuario para el análisis
     plano_analizado: Optional[Dict[str, Any]]
     presupuesto_consolidado: Optional[Dict[str, Any]]
     status: str
@@ -116,6 +117,7 @@ async def vision_analysis(state: GraphState):
             few_shot_examples=few_shot_examples,
             file_index=idx + 1,
             file_total=len(file_paths),
+            notes=state.get("notas_contexto"),
         )
 
         if result.error:

@@ -1,7 +1,7 @@
 "use client";
 
 import { LineaPresupuesto, PriceCorrection } from '@/types/estimate';
-import { ChevronDown, ChevronUp, BrainCircuit, CheckCircle2, Tag } from 'lucide-react';
+import { ChevronDown, ChevronUp, BrainCircuit, CheckCircle2, Tag, Trash2, Plus, PenLine } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 interface EstimateBreakdownProps {
@@ -104,11 +104,26 @@ const REF_COLORS = [
   { header: 'bg-rose-700',    badge: 'bg-rose-50    text-rose-700   border-rose-300'   },
 ];
 
+function newBlankLine(refKey: string): LineaPresupuesto {
+  return {
+    codigo: undefined,
+    ref: refKey,
+    descripcion: '',
+    cantidad: 1,
+    precio_unitario: 0,
+    subtotal: 0,
+    precio_pendiente: true,
+  };
+}
+
 // ── component ─────────────────────────────────────────────────────────────────
 
 export default function EstimateBreakdown({ lineas, subtotal, onChange, onDescriptionsChange, originalLineas, onSavePriceFeedback, isSavingFeedback, onDiscountsChange }: EstimateBreakdownProps) {
   const groups   = groupByRef(lineas);
   const refKeys  = Array.from(groups.keys());
+
+  const [newGroupInput, setNewGroupInput] = useState<string | null>(null);
+  const [editingRef, setEditingRef] = useState<Record<string, string>>({});
 
   // ── descuentos por módulo ─────────────────────────────────────────────────
   // key = refKey, value = porcentaje (0-100); undefined = sin descuento activo
@@ -223,6 +238,61 @@ export default function EstimateBreakdown({ lineas, subtotal, onChange, onDescri
     onChange(newLineas);
   };
 
+  const handleDeleteLine = (globalIdx: number) => {
+    onChange(lineas.filter((_, i) => i !== globalIdx));
+  };
+
+  const handleDeleteGroup = (refKey: string) => {
+    onChange(lineas.filter(l => (l.ref?.trim() || 'SIN-REF') !== refKey));
+  };
+
+  const handleAddLineToGroup = (refKey: string) => {
+    onChange([...lineas, newBlankLine(refKey)]);
+  };
+
+  const handleAddGroup = () => {
+    const ref = (newGroupInput ?? '').trim().toUpperCase();
+    if (!ref) { setNewGroupInput(null); return; }
+    if (refKeys.includes(ref)) {
+      setNewGroupInput(null);
+      setOpenGroups(prev => { const n = new Set(prev); n.add(ref); return n; });
+      return;
+    }
+    const blank = newBlankLine(ref);
+    onChange([...lineas, blank]);
+    setNewGroupInput(null);
+    setOpenGroups(prev => { const n = new Set(prev); n.add(ref); return n; });
+  };
+
+  const handleRenameGroupStart = (refKey: string) => {
+    setEditingRef(prev => ({ ...prev, [refKey]: refKey }));
+  };
+
+  const handleRenameGroupCommit = (oldRef: string) => {
+    const newRef = (editingRef[oldRef] ?? '').trim().toUpperCase();
+    if (!newRef || newRef === oldRef) {
+      setEditingRef(prev => { const n = { ...prev }; delete n[oldRef]; return n; });
+      return;
+    }
+    onChange(lineas.map(l => (l.ref?.trim() || 'SIN-REF') === oldRef ? { ...l, ref: newRef } : l));
+    setDescriptions(prev => {
+      const n = { ...prev };
+      if (n[oldRef] !== undefined) { n[newRef] = n[oldRef]; delete n[oldRef]; }
+      return n;
+    });
+    setGroupDiscounts(prev => {
+      const n = { ...prev };
+      if (n[oldRef] !== undefined) { n[newRef] = n[oldRef]; delete n[oldRef]; }
+      return n;
+    });
+    setOpenGroups(prev => {
+      const n = new Set(prev);
+      if (n.has(oldRef)) { n.delete(oldRef); n.add(newRef); }
+      return n;
+    });
+    setEditingRef(prev => { const n = { ...prev }; delete n[oldRef]; return n; });
+  };
+
   return (
     <div className="p-4 space-y-3">
 
@@ -245,48 +315,83 @@ export default function EstimateBreakdown({ lineas, subtotal, onChange, onDescri
           <div key={refKey} className="rounded-xl border border-gray-200 overflow-hidden shadow-sm">
 
             {/* ── cabecera / botón acordeón ── */}
-            <button
-              type="button"
-              onClick={() => toggleGroup(refKey)}
-              className={`w-full ${color.header} px-4 py-3 flex items-center justify-between gap-3 text-left transition-opacity hover:opacity-90`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                {/* código ref */}
-                <span className="font-mono font-bold text-white text-sm tracking-widest shrink-0">
-                  {refKey}
-                </span>
-
-                {/* descripción resumida (primera línea) */}
-                <span className="text-white/75 text-xs truncate hidden sm:block">
-                  {desc.split('\n')[0]}
-                </span>
-
-                {/* badges */}
-                <span className="text-white/60 text-xs shrink-0">
-                  {groupLineas.length} {groupLineas.length === 1 ? 'pieza' : 'piezas'}
-                </span>
-                {pendingCount > 0 && (
-                  <span className="shrink-0 bg-yellow-400 text-yellow-900 text-xs font-semibold px-2 py-0.5 rounded-full">
-                    {pendingCount} pendiente{pendingCount > 1 ? 's' : ''}
-                  </span>
+            <div className={`w-full ${color.header} px-4 py-2.5 flex items-center justify-between gap-2`}>
+              {/* left: ref + título */}
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                {editingRef[refKey] !== undefined ? (
+                  <input
+                    autoFocus
+                    className="font-mono font-bold text-sm tracking-widest bg-white/20 text-white border border-white/40 rounded px-1.5 py-0.5 w-28 focus:outline-none"
+                    value={editingRef[refKey]}
+                    onChange={e => setEditingRef(prev => ({ ...prev, [refKey]: e.target.value.toUpperCase() }))}
+                    onBlur={() => handleRenameGroupCommit(refKey)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleRenameGroupCommit(refKey); if (e.key === 'Escape') setEditingRef(prev => { const n = {...prev}; delete n[refKey]; return n; }); }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(refKey)}
+                    className="flex items-center gap-2 min-w-0 text-left flex-1"
+                  >
+                    <span className="font-mono font-bold text-white text-sm tracking-widest shrink-0">{refKey}</span>
+                    <span className="text-white/70 text-xs truncate hidden sm:block">{desc.split('\n')[0]}</span>
+                    <span className="text-white/60 text-xs shrink-0">{groupLineas.length} {groupLineas.length === 1 ? 'pieza' : 'piezas'}</span>
+                    {pendingCount > 0 && (
+                      <span className="shrink-0 bg-yellow-400 text-yellow-900 text-xs font-semibold px-2 py-0.5 rounded-full">
+                        {pendingCount} pendiente{pendingCount > 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </button>
                 )}
               </div>
 
-              <div className="flex items-center gap-3 shrink-0">
+              {/* right: precio + acciones */}
+              <div className="flex items-center gap-1.5 shrink-0">
                 {groupDiscounts[refKey] !== undefined && (
                   <div className="flex items-center gap-1 text-white/80">
                     <Tag className="w-3 h-3" />
                     <span className="text-xs font-semibold">−{groupDiscounts[refKey]}%</span>
                   </div>
                 )}
-                <span className="text-white font-bold tabular-nums text-sm">
+                <span className="text-white font-bold tabular-nums text-sm mr-1">
                   {getEffectiveSubtotal(refKey, grpSubtotal).toFixed(2)} €
                 </span>
-                {isOpen
-                  ? <ChevronUp  className="w-4 h-4 text-white/80" />
-                  : <ChevronDown className="w-4 h-4 text-white/80" />}
+
+                {/* renombrar ref */}
+                <button
+                  type="button"
+                  title="Renombrar grupo"
+                  onClick={() => handleRenameGroupStart(refKey)}
+                  className="p-1 rounded text-white/60 hover:text-white hover:bg-white/20 transition-colors"
+                >
+                  <PenLine className="w-3.5 h-3.5" />
+                </button>
+
+                {/* añadir pieza */}
+                <button
+                  type="button"
+                  title="Añadir pieza a este grupo"
+                  onClick={() => { handleAddLineToGroup(refKey); setOpenGroups(p => { const n = new Set(p); n.add(refKey); return n; }); }}
+                  className="p-1 rounded text-white/60 hover:text-white hover:bg-white/20 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+
+                {/* borrar grupo */}
+                <button
+                  type="button"
+                  title="Eliminar grupo"
+                  onClick={() => { if (confirm(`¿Eliminar el grupo "${refKey}" y todas sus piezas?`)) handleDeleteGroup(refKey); }}
+                  className="p-1 rounded text-white/60 hover:text-red-300 hover:bg-white/20 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+
+                <button type="button" onClick={() => toggleGroup(refKey)} className="p-1 rounded text-white/60 hover:text-white">
+                  {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
               </div>
-            </button>
+            </div>
 
             {/* ── contenido desplegable ── */}
             {isOpen && (
@@ -317,6 +422,7 @@ export default function EstimateBreakdown({ lineas, subtotal, onChange, onDescri
                         <th className="px-3 py-2 w-20 text-center">Cant.</th>
                         <th className="px-3 py-2 w-28 text-right">Precio Un. (€)</th>
                         <th className="px-3 py-2 w-28 text-right">Subtotal (€)</th>
+                        <th className="px-1 py-2 w-8"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -324,7 +430,7 @@ export default function EstimateBreakdown({ lineas, subtotal, onChange, onDescri
                         const globalIdx = indices[localIdx];
                         return (
                           <tr key={globalIdx}
-                            className={`border-t transition-colors ${linea.precio_pendiente ? 'bg-yellow-50/50 hover:bg-yellow-50' : 'bg-white hover:bg-gray-50'}`}>
+                            className={`border-t transition-colors group/row ${linea.precio_pendiente ? 'bg-yellow-50/50 hover:bg-yellow-50' : 'bg-white hover:bg-gray-50'}`}>
 
                             {/* código interno */}
                             <td className="px-3 py-2 align-top">
@@ -384,11 +490,35 @@ export default function EstimateBreakdown({ lineas, subtotal, onChange, onDescri
                                 {(linea.subtotal ?? 0).toFixed(2)}
                               </div>
                             </td>
+
+                            {/* eliminar fila */}
+                            <td className="px-1 py-2 align-top">
+                              <button
+                                type="button"
+                                title="Eliminar pieza"
+                                onClick={() => handleDeleteLine(globalIdx)}
+                                className="opacity-0 group-hover/row:opacity-100 p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-all"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
+                </div>
+
+                {/* fila "añadir pieza" dentro del grupo */}
+                <div className="px-3 py-2 border-t border-gray-100">
+                  <button
+                    type="button"
+                    onClick={() => handleAddLineToGroup(refKey)}
+                    className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-blue-600 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Añadir pieza
+                  </button>
                 </div>
 
                 {/* pie del grupo: descuento + total */}
@@ -485,6 +615,35 @@ export default function EstimateBreakdown({ lineas, subtotal, onChange, onDescri
           </div>
         );
       })}
+
+      {/* ── añadir nuevo grupo ── */}
+      <div className="mt-2">
+        {newGroupInput === null ? (
+          <button
+            type="button"
+            onClick={() => setNewGroupInput('')}
+            className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-blue-600 border border-dashed border-gray-300 hover:border-blue-400 rounded-xl px-4 py-2.5 w-full justify-center transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Nuevo grupo
+          </button>
+        ) : (
+          <div className="flex items-center gap-2 border border-blue-300 rounded-xl px-4 py-2.5 bg-blue-50">
+            <Plus className="w-4 h-4 text-blue-500 shrink-0" />
+            <input
+              autoFocus
+              type="text"
+              className="flex-1 bg-transparent text-sm font-mono font-bold uppercase tracking-widest text-gray-800 focus:outline-none placeholder:font-normal placeholder:tracking-normal placeholder:text-gray-400"
+              placeholder="Código del grupo (ej: A07)"
+              value={newGroupInput}
+              onChange={e => setNewGroupInput(e.target.value.toUpperCase())}
+              onKeyDown={e => { if (e.key === 'Enter') handleAddGroup(); if (e.key === 'Escape') setNewGroupInput(null); }}
+            />
+            <button type="button" onClick={handleAddGroup} className="text-xs font-semibold text-blue-600 hover:text-blue-800 shrink-0">Crear</button>
+            <button type="button" onClick={() => setNewGroupInput(null)} className="text-xs text-gray-400 hover:text-gray-600 shrink-0">Cancelar</button>
+          </div>
+        )}
+      </div>
 
       {/* ── totales globales ── */}
       {refKeys.length > 0 && (

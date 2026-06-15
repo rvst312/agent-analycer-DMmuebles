@@ -39,6 +39,7 @@ export default function UploadForm() {
   const router = useRouter();
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [clientId, setClientId]       = useState<string>("");
+  const [notasContexto, setNotasContexto] = useState<string>("");
   const [isDragging, setIsDragging]   = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [contacts, setContacts]             = useState<HoldedContact[]>([]);
@@ -143,6 +144,7 @@ export default function UploadForm() {
       const formData = new FormData();
       selectedFiles.forEach(sf => formData.append("files", sf.file));
       formData.append("cliente_id", clientId);
+      if (notasContexto.trim()) formData.append("notas_contexto", notasContexto.trim());
 
       const res = await fetch(`${BASE_URL}/estimates`, { method: "POST", body: formData });
 
@@ -186,6 +188,23 @@ export default function UploadForm() {
                 setCreateForm({ nombre: initialName, email: "", telefono: "", nif: "" });
                 setShowCreateModal(true);
               }}
+            />
+          </div>
+
+          {/* Contexto para el análisis */}
+          <div className="space-y-2">
+            <Label htmlFor="notas-contexto">
+              Contexto del proyecto
+              <span className="ml-1.5 text-xs font-normal text-muted-foreground">(opcional, mejora la precisión)</span>
+            </Label>
+            <textarea
+              id="notas-contexto"
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none leading-relaxed placeholder:text-muted-foreground"
+              rows={3}
+              placeholder={`Ej: Materiales principales: Egger melaminizado blanco mate 16mm. Herraje Blum Aventos. Armarios dormitorio 1 y 2 con puertas correderas. Sin incluir instalación eléctrica.`}
+              value={notasContexto}
+              onChange={e => setNotasContexto(e.target.value)}
+              disabled={isUploading}
             />
           </div>
 

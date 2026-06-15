@@ -9,7 +9,7 @@ import KbSearchModal from "@/components/KbSearchModal";
 import { EstimateDetail, LineaPresupuesto, PlanoAnalizado, PriceCorrection, SSEEvent } from "@/types/estimate";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { BrainCircuit, CheckCircle2, Circle, Loader2, Plus } from "lucide-react";
+import { BrainCircuit, CheckCircle2, Circle, Loader2, Plus, Save } from "lucide-react";
 import { getToken } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -73,6 +73,7 @@ export default function EstimatePage() {
   const [showKbModal, setShowKbModal] = useState(false);
   const [motivoRechazo, setMotivoRechazo] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSavingLineas, setIsSavingLineas] = useState(false);
   const [planoAnalizado, setPlanoAnalizado] = useState<PlanoAnalizado | null>(null);
 
   const esRef = useRef<EventSource | null>(null);
@@ -114,6 +115,24 @@ export default function EstimatePage() {
     setSubtotal(s);
     setIva(i);
     setTotal(t);
+  };
+
+  const handleSaveLineas = async () => {
+    setIsSavingLineas(true);
+    try {
+      const res = await fetch(`${BASE_URL}/estimates/${estimateId}/lineas`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lineas, subtotal, iva, total }),
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      toast.success("Presupuesto guardado.");
+      setOriginalLineas(lineas.map(l => ({ ...l })));
+    } catch {
+      toast.error("No se pudieron guardar los cambios.");
+    } finally {
+      setIsSavingLineas(false);
+    }
   };
 
   const handleSavePriceFeedback = async (corrections: PriceCorrection[]) => {
@@ -401,6 +420,18 @@ export default function EstimatePage() {
                 <Plus className="w-3 h-3" />
                 Añadir de KB
               </Button>
+              {!isProcessing && lineas.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSaveLineas}
+                  disabled={isSavingLineas}
+                  className="gap-1 text-xs h-7"
+                >
+                  {isSavingLineas ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                  Guardar
+                </Button>
+              )}
               <span className="text-xs text-gray-400 flex items-center gap-1">
                 {isProcessing && lineas.length === 0 && <><Loader2 className="w-3 h-3 animate-spin" /> Calculando…</>}
                 {lineas.length > 0 && `${lineas.length} ítem${lineas.length !== 1 ? "s" : ""}`}

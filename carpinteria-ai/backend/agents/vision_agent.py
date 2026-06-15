@@ -228,6 +228,7 @@ def _analyze_armario_plan(
     view_codes: List[str],
     plano_id: str,
     few_shot_examples: Optional[List] = None,
+    notes: Optional[str] = None,
 ) -> PlanoAnalizado:
     """Pasada específica para planos de armario: extrae módulos, puertas e items interiores."""
 
@@ -244,8 +245,10 @@ def _analyze_armario_plan(
         "y extrae los armarios de cada una.\n\n"
     ) if media_type == "application/pdf" else ""
 
+    notes_ctx = f"\n<contexto_cliente>\n{notes}\n</contexto_cliente>\n" if notes else ""
+
     prompt = f"""<instructions>
-{pdf_ctx}{codes_ctx}
+{pdf_ctx}{codes_ctx}{notes_ctx}
 
 Para CADA referencia/armario extrae en JSON dentro de <output_format>:
 {{
@@ -420,7 +423,7 @@ def analyze_plan(
 
     # ── PASADA 3: extracción específica ───────────────────────────────────────
     if tipo_plano == "armario":
-        return _analyze_armario_plan(client, image_base64, media_type, view_codes, plano_id, few_shot_examples)
+        return _analyze_armario_plan(client, image_base64, media_type, view_codes, plano_id, few_shot_examples, notes)
 
     # ── PASADA 3 (generic): extracción genérica ───────────────────────────────
     if view_codes:

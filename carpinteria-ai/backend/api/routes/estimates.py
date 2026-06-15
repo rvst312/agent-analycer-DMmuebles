@@ -76,6 +76,7 @@ async def process_estimate(estimate_id: str, file_paths: List[str], cliente_id: 
                 "archivos_paths": file_paths,
                 "archivos_content_types": content_types,
                 "cliente_id": cliente_id,
+                "notas_contexto": notas_contexto or None,
                 "status": "pending",
                 "thread_id": estimate_id,
                 "content_type": content_types[0],
@@ -146,7 +147,8 @@ async def process_estimate(estimate_id: str, file_paths: List[str], cliente_id: 
 async def create_estimate(
     background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
-    cliente_id: str = Form(...)
+    cliente_id: str = Form(...),
+    notas_contexto: str = Form(""),
 ):
     if not files:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Se requiere al menos un archivo.")
@@ -199,6 +201,39 @@ async def create_estimate(
     background_tasks.add_task(process_estimate, estimate_id, file_paths, cliente_id, content_types)
 
     return {"estimate_id": estimate_id, "status": "processing", "num_files": len(file_paths)}
+
+
+@router.patch("/{estimate_id}/lineas", status_code=status.HTTP_200_OK)
+async def update_estimate_lineas(estimate_id: str, body: dict):
+    """Persist manually-edited budget lines back to PostgreSQL."""
+    lineas = body.get("lineas")
+    if lineas is None:
+        raise HTTPException(status_code=400, detail="lineas is required")
+
+    subtotal = float(body.get("subtotal", 0))
+    iva = float(body.get("iva", 0))
+    total = float(body.get("total", 0))
+
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(PresupuestoModel).where(PresupuestoModel.plano_id == estimate_id)
+            )
+            record = result.scalars().first()
+            if not record:
+                raise HTTPException(status_code=404, detail=f"Estimate {estimate_id} not found")
+            record.lineas = lineas
+            record.subtotal = subtotal
+            record.iva = iva
+            record.total = total
+            record.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+        return {"saved": True, "count": len(lineas)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating lineas for {estimate_id}: {e}")
+        raise HTTPException(status_code=500, detail="Error saving lineas")
 
 
 @router.get("/{estimate_id}/stream")
