@@ -32,10 +32,13 @@ const AutoResizeTextarea = ({ value, onChange, className }: {
 }) => {
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    if (ref.current) {
-      ref.current.style.height = 'auto';
-      ref.current.style.height = ref.current.scrollHeight + 'px';
-    }
+    const el = ref.current;
+    if (!el) return;
+    // Save scroll position — height:auto can cause layout shift
+    const savedScrollY = window.scrollY;
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+    window.scrollTo(0, savedScrollY);
   }, [value]);
   return <textarea ref={ref} value={value} onChange={onChange} rows={1} className={`resize-none overflow-hidden ${className}`} />;
 };
@@ -115,6 +118,9 @@ export default function EstimateBreakdown({
   const [generatingDesc, setGeneratingDesc] = useState<Record<string, boolean>>({});
   const [generatingTitle, setGeneratingTitle] = useState(false);
   const [titulo, setTitulo] = useState('');
+  // Tracks every ref we have ever seen — so closing a group doesn't cause it
+  // to re-open the next time lineas changes (add/delete a line).
+  const seenGroupsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => { onTitleChange?.(titulo); }, [titulo, onTitleChange]);
 
@@ -185,20 +191,26 @@ export default function EstimateBreakdown({
 
   useEffect(() => {
     const g = groupByRef(lineas);
-    setDescriptions(prev => {
-      const next = { ...prev };
-      let changed = false;
-      Array.from(g.entries()).forEach(([k, { lineas: gl }]) => {
-        if (next[k] === undefined) { next[k] = buildAutoDescription(k, gl); changed = true; }
+
+    // Only groups we have NEVER seen before should be auto-opened.
+    // Closed groups (already in seenGroupsRef but not in openGroups) must stay closed.
+    const brandNew = Array.from(g.keys()).filter(k => !seenGroupsRef.current.has(k));
+    brandNew.forEach(k => seenGroupsRef.current.add(k));
+
+    if (brandNew.length > 0) {
+      setDescriptions(prev => {
+        const next = { ...prev };
+        brandNew.forEach(k => {
+          if (next[k] === undefined) next[k] = buildAutoDescription(k, g.get(k)!.lineas);
+        });
+        return next;
       });
-      return changed ? next : prev;
-    });
-    setOpenGroups(prev => {
-      const next = new Set(prev);
-      let changed = false;
-      Array.from(g.keys()).forEach(k => { if (!next.has(k)) { next.add(k); changed = true; } });
-      return changed ? next : prev;
-    });
+      setOpenGroups(prev => {
+        const next = new Set(prev);
+        brandNew.forEach(k => next.add(k));
+        return next;
+      });
+    }
   }, [lineas]);
 
   const changedIndices = React.useMemo<Set<number>>(() => {
@@ -264,6 +276,9 @@ export default function EstimateBreakdown({
     setDescriptions(prev => { const n = { ...prev }; if (n[oldRef] !== undefined) { n[newRef] = n[oldRef]; delete n[oldRef]; } return n; });
     setGroupDiscounts(prev => { const n = { ...prev }; if (n[oldRef] !== undefined) { n[newRef] = n[oldRef]; delete n[oldRef]; } return n; });
     setOpenGroups(prev => { const n = new Set(prev); if (n.has(oldRef)) { n.delete(oldRef); n.add(newRef); } return n; });
+    // Keep seenGroupsRef in sync so the rename target isn't treated as a brand-new group
+    seenGroupsRef.current.delete(oldRef);
+    seenGroupsRef.current.add(newRef);
     setEditingRef(prev => { const n = { ...prev }; delete n[oldRef]; return n; });
   };
 
