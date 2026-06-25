@@ -9,6 +9,7 @@ class PresupuestoModel(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     cliente_id = Column(String, nullable=False)
+    nombre_cliente = Column(String, nullable=True)
     plano_id = Column(String, nullable=False, index=True)
     image_path = Column(String, nullable=True)
     subtotal = Column(Float, nullable=False, default=0.0)

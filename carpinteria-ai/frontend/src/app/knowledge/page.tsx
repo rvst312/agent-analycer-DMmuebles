@@ -6,8 +6,7 @@ import AddPriceModal from '@/components/AddPriceModal';
 import { knowledgeApi } from '@/lib/knowledge-api';
 import { PrecioResponse } from '@/types/knowledge';
 import { toast } from 'sonner';
-import { Upload, Loader2, Search, Filter, Download, Plus, Trash2, FileDown, AlertTriangle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Upload, Loader2, Search, Filter, Download, Plus, Trash2, FileDown, AlertTriangle, X } from 'lucide-react';
 
 type ApiError = { response?: { data?: { detail?: unknown } } };
 
@@ -245,79 +244,90 @@ export default function KnowledgePage() {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Base de Precios</h1>
-          <p className="text-gray-500 mt-1">Gestión del conocimiento RAG para materiales y precios</p>
+    <div className="p-6 max-w-7xl mx-auto">
+
+      {/* Page header */}
+      <div className="mb-6">
+        <h1 className="text-xl font-semibold text-gray-900">Base de precios</h1>
+        <p className="text-sm text-gray-400 mt-0.5">Conocimiento RAG para materiales y precios de carpintería</p>
+      </div>
+
+      {/* Toolbar: filters + actions */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-5">
+        {/* Search */}
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Buscar material, descripción…"
+            className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-lg bg-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-200 transition-shadow"
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+          />
+          {searchFilter && (
+            <button onClick={() => setSearchFilter('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
-        <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={() => setIsAddModalOpen(true)} className="flex items-center gap-2">
-            <Plus className="w-4 h-4" />
-            Añadir Manual
-          </Button>
-          <Button variant="outline" onClick={handleExportCSV} className="flex items-center gap-2">
-            <Download className="w-4 h-4" />
-            Exportar CSV
-          </Button>
+        {/* Category filter */}
+        <div className="relative sm:w-52">
+          <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+          <select
+            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-200 transition-shadow appearance-none cursor-pointer"
+            value={categoriaFilter}
+            onChange={(e) => setCategoriaFilter(e.target.value)}
+          >
+            <option value="">Todas las categorías</option>
+            {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+          </select>
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={handleDownloadTemplate} title="Plantilla CSV"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:border-gray-300 hover:text-gray-800 bg-white transition-colors">
+            <FileDown className="w-3.5 h-3.5" /> Plantilla
+          </button>
+          <button onClick={handleExportCSV}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:border-gray-300 hover:text-gray-800 bg-white transition-colors">
+            <Download className="w-3.5 h-3.5" /> Exportar
+          </button>
           <input type="file" ref={fileInputRef} className="hidden" accept=".csv" onChange={handleFileChange} />
-          <Button variant="outline" onClick={handleDownloadTemplate} className="flex items-center gap-2" title="Descargar plantilla CSV">
-            <FileDown className="w-4 h-4" />
-            Plantilla CSV
-          </Button>
-          <Button onClick={handleImportClick} disabled={isImporting} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700">
-            {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-            {isImporting ? 'Importando...' : 'Importar CSV'}
-          </Button>
+          <button onClick={handleImportClick} disabled={isImporting}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:border-gray-300 hover:text-gray-800 bg-white transition-colors disabled:opacity-50">
+            {isImporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+            {isImporting ? 'Importando…' : 'Importar CSV'}
+          </button>
+          <button onClick={() => setIsAddModalOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-gray-900 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors">
+            <Plus className="w-3.5 h-3.5" /> Añadir
+          </button>
         </div>
       </div>
 
+      {/* Import progress banner */}
       {isImporting && (
-        <div className="mb-6 p-4 border rounded-lg bg-blue-50 border-blue-100 flex items-center gap-3 text-blue-800">
-          <Loader2 className="w-5 h-5 animate-spin" />
+        <div className="mb-5 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl flex items-center gap-3 text-gray-700">
+          <Loader2 className="w-4 h-4 animate-spin text-gray-400 shrink-0" />
           <div className="flex-1">
-            <p className="font-medium text-sm">Procesando archivo CSV...</p>
-            <div className="w-full bg-blue-200 rounded-full h-1.5 mt-2 overflow-hidden">
-              <div className="bg-blue-600 h-1.5 rounded-full w-full animate-pulse" />
+            <p className="text-sm font-medium">Procesando archivo CSV…</p>
+            <div className="w-full bg-gray-200 rounded-full h-1 mt-1.5 overflow-hidden">
+              <div className="bg-gray-500 h-1 rounded-full w-full animate-pulse" />
             </div>
           </div>
         </div>
       )}
 
-      {/* Filtros */}
-      <div className="bg-white p-4 border rounded-lg shadow-sm mb-6 flex flex-col sm:flex-row gap-4">
-        <div className="flex-1 flex items-center gap-2 border rounded-md px-3 py-2 focus-within:ring-2 focus-within:ring-blue-500">
-          <Search className="w-4 h-4 text-gray-400 shrink-0" />
-          <input
-            type="text"
-            placeholder="Buscar material, descripción…"
-            className="flex-1 outline-none text-sm"
-            value={searchFilter}
-            onChange={(e) => setSearchFilter(e.target.value)}
-          />
-          {searchFilter && (
-            <button onClick={() => setSearchFilter('')} className="text-gray-400 hover:text-gray-600 text-xs">✕</button>
-          )}
-        </div>
-        <div className="sm:w-56 flex items-center gap-2 border rounded-md px-3 py-2 focus-within:ring-2 focus-within:ring-blue-500">
-          <Filter className="w-4 h-4 text-gray-400 shrink-0" />
-          <select
-            className="flex-1 outline-none text-sm bg-transparent"
-            value={categoriaFilter}
-            onChange={(e) => setCategoriaFilter(e.target.value)}
-          >
-            <option value="">Todas las categorías</option>
-            {categories.map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Banner de selección masiva */}
+      {/* Bulk selection banner */}
       {selectedIds.size > 0 && (
-        <div className={`mb-4 px-4 py-3 rounded-lg flex flex-col gap-2 shadow-md ${selectAllInDb ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'}`}>
+        <div className={`mb-4 px-4 py-3 rounded-xl flex flex-col gap-2 ${
+          selectAllInDb
+            ? 'bg-red-50 border border-red-200 text-red-700'
+            : 'bg-gray-900 text-white'
+        }`}>
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium flex items-center gap-2">
               {selectAllInDb && <AlertTriangle className="w-4 h-4" />}
@@ -328,40 +338,42 @@ export default function KnowledgePage() {
                 : `${selectedIds.size} ${selectedIds.size === 1 ? 'elemento seleccionado' : 'elementos seleccionados'}`
               }
             </span>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <button
                 onClick={() => { setSelectedIds(new Set()); setSelectAllInDb(false); }}
-                className={`text-sm underline ${selectAllInDb ? 'text-red-200 hover:text-white' : 'text-blue-200 hover:text-white'}`}
+                className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${
+                  selectAllInDb ? 'text-red-600 hover:bg-red-100' : 'text-white/70 hover:text-white hover:bg-white/10'
+                }`}
               >
-                Deseleccionar todo
+                Cancelar
               </button>
-              <Button
+              <button
                 onClick={handleBulkDelete}
                 disabled={isBulkDeleting}
-                className={`flex items-center gap-2 border-0 ${selectAllInDb ? 'bg-white text-red-600 hover:bg-red-50' : 'bg-red-600 hover:bg-red-700 text-white'}`}
+                className={`inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-60 ${
+                  selectAllInDb
+                    ? 'bg-red-600 text-white hover:bg-red-700'
+                    : 'bg-white text-gray-900 hover:bg-gray-100'
+                }`}
               >
-                {isBulkDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                {isBulkDeleting ? 'Eliminando...' : selectAllInDb ? 'Eliminar todo' : 'Eliminar seleccionados'}
-              </Button>
+                {isBulkDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                {isBulkDeleting ? 'Eliminando…' : selectAllInDb ? 'Eliminar todo' : 'Eliminar seleccionados'}
+              </button>
             </div>
           </div>
 
-          {/* Opción de seleccionar toda la DB cuando hay más páginas */}
           {allVisibleSelected && hasMore && !selectAllInDb && (
-            <div className="border-t border-blue-500 pt-2 text-sm text-blue-100 flex items-center gap-2">
-              <span>Solo se han cargado {precios.length} elementos. Puede haber más en la base de datos.</span>
-              <button
-                onClick={() => setSelectAllInDb(true)}
-                className="underline text-white font-medium hover:text-blue-200"
-              >
+            <div className="border-t border-white/20 pt-2 text-sm text-white/70 flex items-center gap-2 flex-wrap">
+              <span>Solo se han cargado {precios.length} elementos.</span>
+              <button onClick={() => setSelectAllInDb(true)} className="underline text-white font-medium">
                 Seleccionar {debouncedCategoria ? `toda la categoría "${debouncedCategoria}"` : 'toda la base de datos'}
               </button>
             </div>
           )}
           {selectAllInDb && (
-            <div className="border-t border-red-500 pt-2 text-sm text-red-100 flex items-center gap-2">
-              <span>La eliminación afectará a todos los registros{debouncedCategoria ? ` de la categoría "${debouncedCategoria}"` : ''}, no solo los visibles.</span>
-              <button onClick={() => setSelectAllInDb(false)} className="underline text-white font-medium">
+            <div className="border-t border-red-200 pt-2 text-sm text-red-600 flex items-center gap-2 flex-wrap">
+              <span>Afectará a todos los registros{debouncedCategoria ? ` de "${debouncedCategoria}"` : ''}, no solo los visibles.</span>
+              <button onClick={() => setSelectAllInDb(false)} className="underline font-medium">
                 Volver a selección parcial
               </button>
             </div>
@@ -369,6 +381,7 @@ export default function KnowledgePage() {
         </div>
       )}
 
+      {/* Table */}
       <PriceTable
         precios={precios}
         loading={loading && skip === 0}
@@ -378,18 +391,27 @@ export default function KnowledgePage() {
         onSelectionChange={setSelectedIds}
       />
 
+      {/* Load more */}
       {!loading && precios.length > 0 && hasMore && (
-        <div className="flex justify-center mt-6">
-          <Button variant="outline" onClick={() => setSkip(prev => prev + limit)} disabled={loading}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+        <div className="flex justify-center mt-5">
+          <button onClick={() => setSkip(prev => prev + limit)} disabled={loading}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:border-gray-300 hover:text-gray-800 bg-white transition-colors disabled:opacity-50">
+            {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             Cargar más
-          </Button>
+          </button>
         </div>
       )}
 
+      {/* Empty state */}
       {!loading && precios.length === 0 && (
-        <div className="text-center py-8 text-gray-500">
-          No hay resultados que coincidan con los filtros actuales.
+        <div className="bg-white border border-gray-200 rounded-xl py-16 text-center">
+          <p className="text-sm text-gray-400">No hay resultados para los filtros actuales.</p>
+          {(searchFilter || categoriaFilter) && (
+            <button onClick={() => { setSearchFilter(''); setCategoriaFilter(''); }}
+              className="mt-2 text-sm text-gray-600 hover:text-gray-900 underline underline-offset-2">
+              Limpiar filtros
+            </button>
+          )}
         </div>
       )}
 

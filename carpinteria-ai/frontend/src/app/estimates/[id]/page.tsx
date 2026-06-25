@@ -9,7 +9,7 @@ import KbSearchModal from "@/components/KbSearchModal";
 import { EstimateDetail, LineaPresupuesto, PlanoAnalizado, PriceCorrection, SSEEvent } from "@/types/estimate";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { BrainCircuit, CheckCircle2, Circle, Loader2, Plus, Save } from "lucide-react";
+import { ArrowLeft, BrainCircuit, CheckCircle2, Circle, Loader2, Plus, Save } from "lucide-react";
 import { getToken } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -24,6 +24,17 @@ const NODES_ORDER = [
 ];
 
 const TERMINAL = new Set(["human_approval_required", "pending_review", "completed", "rejected", "error", "approved"]);
+
+const STATUS_LABEL: Record<string, { label: string; color: string }> = {
+  processing:              { label: "Procesando",         color: "bg-blue-50 text-blue-700 border border-blue-200" },
+  human_approval_required: { label: "Pendiente revisión", color: "bg-amber-50 text-amber-700 border border-amber-200" },
+  pending_review:          { label: "Pendiente revisión", color: "bg-amber-50 text-amber-700 border border-amber-200" },
+  approved:                { label: "Aprobado",           color: "bg-emerald-50 text-emerald-700 border border-emerald-200" },
+  completed:               { label: "Completado",         color: "bg-emerald-50 text-emerald-700 border border-emerald-200" },
+  sent_to_holded:          { label: "Enviado a Holded",   color: "bg-violet-50 text-violet-700 border border-violet-200" },
+  rejected:                { label: "Rechazado",          color: "bg-red-50 text-red-700 border border-red-200" },
+  error:                   { label: "Error",              color: "bg-red-50 text-red-700 border border-red-200" },
+};
 
 function NodeProgress({ done, current }: { done: Set<string>; current: string | null }) {
   return (
@@ -63,6 +74,7 @@ export default function EstimatePage() {
   const [iva, setIva] = useState(0);
   const [total, setTotal] = useState(0);
   const [groupDescriptions, setGroupDescriptions] = useState<Record<string, string>>({});
+  const [tituloProyecto, setTituloProyecto] = useState('');
 
   const [originalLineas, setOriginalLineas] = useState<LineaPresupuesto[]>([]);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
@@ -335,7 +347,7 @@ export default function EstimatePage() {
         body: JSON.stringify({
           thread_id: estimateId,
           action,
-          ajustes: { lineas, subtotal, iva, total, descripciones_grupo: groupDescriptions },
+          ajustes: { lineas, subtotal, iva, total, descripciones_grupo: groupDescriptions, titulo_proyecto: tituloProyecto },
           motivo: action === "reject" ? motivoRechazo : undefined,
         }),
       });
@@ -368,26 +380,37 @@ export default function EstimatePage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Presupuesto #{estimateId.substring(0, 8)}</h1>
-          {estimate?.cliente_id && <p className="text-sm text-gray-500 mt-0.5">Cliente: {estimate.cliente_id}</p>}
-          {estimate?.plano_analizado?.tipo_plano && estimate.plano_analizado.tipo_plano !== "general" && (
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 mt-1">
-              {estimate.plano_analizado.tipo_plano.replace(/_/g, " ")}
-            </span>
-          )}
+      {/* Back + Header */}
+      <div className="mb-5">
+        <a href="/dashboard" className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700 transition-colors mb-3">
+          <ArrowLeft className="w-3.5 h-3.5" />
+          Panel de control
+        </a>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold text-gray-900">
+              {estimate?.nombre_cliente || estimate?.cliente_id || `Presupuesto #${estimateId.substring(0, 8)}`}
+            </h1>
+            <div className="flex items-center gap-2 mt-1">
+              <p className="text-xs text-gray-400 font-mono">#{estimateId.substring(0, 8)}</p>
+              {estimate?.plano_analizado?.tipo_plano && estimate.plano_analizado.tipo_plano !== "general" && (
+                <span className="text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded capitalize">
+                  {estimate.plano_analizado.tipo_plano.replace(/_/g, " ")}
+                </span>
+              )}
+            </div>
+          </div>
+          {(() => {
+            const rawStatus = loading ? "processing" : (estimate?.status ?? "processing");
+            const cfg = STATUS_LABEL[rawStatus] ?? { label: rawStatus, color: "bg-gray-50 text-gray-600 border border-gray-200" };
+            return (
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium shrink-0 ${cfg.color}`}>
+                {(loading || isProcessing) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {loading ? "Iniciando…" : cfg.label}
+              </span>
+            );
+          })()}
         </div>
-        <span className={`px-3 py-1 rounded-full text-sm font-medium flex items-center gap-1.5 ${
-          loading || isProcessing      ? "bg-blue-100 text-blue-700" :
-          canApprove                   ? "bg-yellow-100 text-yellow-800" :
-          estimate?.status === "error" ? "bg-red-100 text-red-700" :
-          "bg-green-100 text-green-700"
-        }`}>
-          {(loading || isProcessing) && <Loader2 className="w-3 h-3 animate-spin" />}
-          {loading ? "Iniciando análisis…" : (estimate?.status ?? "Procesando")}
-        </span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
@@ -403,39 +426,73 @@ export default function EstimatePage() {
               <NodeProgress done={doneNodes} current={currentNode} />
             </div>
           )}
+          {planoAnalizado && (
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Resumen IA</h3>
+                <div className="flex items-center gap-2">
+                  {planoAnalizado.tipo_plano && planoAnalizado.tipo_plano !== "general" && (
+                    <span className="text-xs font-medium bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full capitalize">
+                      {planoAnalizado.tipo_plano.replace(/_/g, " ")}
+                    </span>
+                  )}
+                  <span className="text-xs text-gray-400">{Math.round(planoAnalizado.confidence_score * 100)}% conf.</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 mb-3">
+                {Object.entries(
+                  planoAnalizado.componentes.reduce((acc: Record<string, number>, c) => {
+                    const key = c.tipo || "otro";
+                    acc[key] = (acc[key] || 0) + (c.cantidad || 1);
+                    return acc;
+                  }, {})
+                ).map(([tipo, count]) => (
+                  <div key={tipo} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-1.5">
+                    <span className="text-xs text-gray-600 capitalize">{tipo.replace(/_/g, " ")}</span>
+                    <span className="text-xs font-bold text-gray-900">{count as number}</span>
+                  </div>
+                ))}
+              </div>
+              {(() => {
+                const mats = Array.from(new Set(planoAnalizado.componentes.map(c => c.material).filter(Boolean))).slice(0, 5);
+                return mats.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {mats.map(m => (
+                      <span key={m} className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">{m}</span>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
+              <p className="text-xs text-gray-400 mt-2">{planoAnalizado.componentes.length} piezas detectadas</p>
+            </div>
+          )}
         </div>
 
         {/* Right: lines + actions */}
         <div className="flex flex-col gap-4">
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-700">Líneas del presupuesto</h2>
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
               <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowKbModal(true)}
-                className="gap-1 text-xs h-7"
-              >
-                <Plus className="w-3 h-3" />
-                Añadir de KB
-              </Button>
-              {!isProcessing && lineas.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSaveLineas}
-                  disabled={isSavingLineas}
-                  className="gap-1 text-xs h-7"
-                >
-                  {isSavingLineas ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                  Guardar
+                <h2 className="text-sm font-semibold text-gray-800">Presupuesto</h2>
+                {isProcessing && lineas.length === 0 && (
+                  <span className="flex items-center gap-1 text-xs text-gray-400">
+                    <Loader2 className="w-3 h-3 animate-spin" /> calculando…
+                  </span>
+                )}
+                {lineas.length > 0 && (
+                  <span className="text-xs text-gray-400">{lineas.length} ítem{lineas.length !== 1 ? "s" : ""}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Button variant="outline" size="sm" onClick={() => setShowKbModal(true)} className="gap-1 text-xs h-7 border-gray-200">
+                  <Plus className="w-3 h-3" /> KB
                 </Button>
-              )}
-              <span className="text-xs text-gray-400 flex items-center gap-1">
-                {isProcessing && lineas.length === 0 && <><Loader2 className="w-3 h-3 animate-spin" /> Calculando…</>}
-                {lineas.length > 0 && `${lineas.length} ítem${lineas.length !== 1 ? "s" : ""}`}
-              </span>
+                {!isProcessing && lineas.length > 0 && (
+                  <Button variant="outline" size="sm" onClick={handleSaveLineas} disabled={isSavingLineas} className="gap-1 text-xs h-7 border-gray-200">
+                    {isSavingLineas ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                    Guardar
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -443,47 +500,50 @@ export default function EstimatePage() {
               <p className="p-6 text-center text-sm text-gray-400">Sin líneas</p>
             ) : (
               <EstimateBreakdown
+                estimateId={estimateId}
                 lineas={lineas}
                 subtotal={subtotal}
                 iva={iva}
                 total={total}
                 onChange={handleLineasChange}
                 onDescriptionsChange={setGroupDescriptions}
+                onTitleChange={setTituloProyecto}
                 originalLineas={originalLineas}
                 onSavePriceFeedback={handleSavePriceFeedback}
                 isSavingFeedback={isSavingFeedback}
                 onDiscountsChange={handleDiscountsChange}
+                clienteId={estimate?.cliente_id}
               />
             )}
           </div>
 
           {planoAnalizado && (
-            <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 shadow-sm flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-purple-800">Aprendizaje Automático</p>
-                <p className="text-xs text-purple-600 mt-0.5">
-                  {planoAnalizado.componentes.length} componente{planoAnalizado.componentes.length !== 1 ? "s" : ""} detectados · confianza {Math.round(planoAnalizado.confidence_score * 100)}%
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-purple-300 text-purple-700 hover:bg-purple-100 gap-1.5"
-                onClick={() => setShowLearnModal(true)}
-              >
-                <BrainCircuit className="w-4 h-4" />
+            <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center justify-between">
+              <p className="text-xs text-gray-500">
+                <span className="font-medium text-gray-700">{planoAnalizado.componentes.length} componentes</span>
+                {" "}detectados · confianza {Math.round(planoAnalizado.confidence_score * 100)}%
+              </p>
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs h-7 border-gray-200" onClick={() => setShowLearnModal(true)}>
+                <BrainCircuit className="w-3.5 h-3.5" />
                 Corregir y aprender
               </Button>
             </div>
           )}
 
           {canApprove && (
-            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm flex flex-col gap-3">
-              <h3 className="text-sm font-semibold text-gray-700">Acciones</h3>
-              <p className="text-xs text-gray-500">Revisa el presupuesto antes de continuar.</p>
-              <div className="flex gap-3">
-                <Button variant="destructive" className="flex-1" onClick={() => setShowRejectModal(true)}>Rechazar</Button>
-                <Button className="flex-1" onClick={() => setShowApproveModal(true)}>Aprobar y enviar</Button>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                <h3 className="text-sm font-semibold text-amber-800">Pendiente de revisión</h3>
+              </div>
+              <p className="text-xs text-amber-700">Revisa las líneas y el importe antes de enviar a Holded.</p>
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1 border-gray-300 text-gray-700 hover:bg-gray-50" onClick={() => setShowRejectModal(true)}>
+                  Rechazar
+                </Button>
+                <Button className="flex-1 bg-gray-900 hover:bg-gray-700 text-white" onClick={() => setShowApproveModal(true)}>
+                  Aprobar y enviar
+                </Button>
               </div>
             </div>
           )}

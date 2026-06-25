@@ -107,3 +107,4 @@ class PresupuestoConsolidado(BaseModel):
     lineas_pendientes: List[LineaPresupuesto]
     status: str = "pending_review"
     descripciones_grupo: Optional[Dict[str, str]] = None
+    titulo_proyecto: Optional[str] = None

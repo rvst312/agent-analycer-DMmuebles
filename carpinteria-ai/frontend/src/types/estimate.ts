@@ -49,6 +49,7 @@ export interface EstimateSummary {
   estimate_id: string;
   status: string;
   cliente_id?: string;
+  nombre_cliente?: string;
   total: number;
   image_url?: string;
   created_at?: string;
@@ -60,6 +61,7 @@ export interface EstimateDetail {
   status: string;
   plano_id?: string;
   cliente_id?: string;
+  nombre_cliente?: string;
   image_url?: string;
   image_urls?: string[];
   plano_analizado?: PlanoAnalizado;

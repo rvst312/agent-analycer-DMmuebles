@@ -98,8 +98,10 @@ def get_or_create_contacto(nif: str, datos: ContactoSchema) -> Optional[str]:
 def _agrupar_lineas_por_ref(presupuesto) -> list:
     """
     Agrupa las líneas por ref y devuelve una lista de items para Holded.
-    Cada ref → un único item: nombre=ref, desc=descripción comercial, subtotal=suma del grupo.
-    Las líneas pendientes de precio se excluyen del subtotal pero aparecen en la descripción.
+    Primer item: título del proyecto completo (editable desde el visualizador),
+    a precio 0. Luego, un item por cada ref (A01, E02…): nombre=ref,
+    desc=descripción comercial de 3 líneas, subtotal=suma del grupo.
+    Las líneas pendientes de precio se excluyen del subtotal. Sin IVA (tax=0).
     """
     from collections import defaultdict
 
@@ -109,8 +111,15 @@ def _agrupar_lineas_por_ref(presupuesto) -> list:
         grupos[key].append(linea)
 
     descripciones_grupo: dict = getattr(presupuesto, "descripciones_grupo", None) or {}
+    titulo_proyecto = getattr(presupuesto, "titulo_proyecto", None) or presupuesto.plano_id
 
-    items = []
+    items = [{
+        "name": titulo_proyecto,
+        "units": 1,
+        "subtotal": 0,
+        "tax": 0,
+    }]
+
     for ref, lineas in grupos.items():
         precio_grupo = sum(
             l.subtotal for l in lineas if not l.precio_pendiente
@@ -121,7 +130,7 @@ def _agrupar_lineas_por_ref(presupuesto) -> list:
             "desc": desc,
             "units": 1,
             "subtotal": round(precio_grupo, 2),
-            "tax": 21,
+            "tax": 0,
         })
 
     return items

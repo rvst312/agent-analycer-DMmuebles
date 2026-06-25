@@ -120,8 +120,14 @@ def test_crear_presupuesto_success(mock_post, mock_presupuesto_consolidado):
     assert "contactId" in kwargs["json"]
     assert kwargs["json"]["contactId"] == "contact_123"
     assert "items" in kwargs["json"]
-    assert len(kwargs["json"]["items"]) == 1
-    assert kwargs["json"]["items"][0]["name"] == "Madera Roble"
+    items = kwargs["json"]["items"]
+    # Header item (project title, price 0) + one item per ref group
+    assert len(items) == 2
+    assert items[0]["subtotal"] == 0
+    assert items[0]["tax"] == 0
+    assert items[1]["name"] == "SIN-REF"
+    assert items[1]["subtotal"] == 100.0
+    assert items[1]["tax"] == 0
 
 @patch("services.holded_service.requests.post")
 def test_crear_presupuesto_error(mock_post, mock_presupuesto_consolidado):

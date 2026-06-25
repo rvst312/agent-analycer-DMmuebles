@@ -51,9 +51,10 @@ def _apply_migrations(conn):
 
     json_type = "JSONB" if is_pg else "JSON"
     new_cols = {
-        "image_path":    "ALTER TABLE presupuestos ADD COLUMN image_path TEXT",
-        "updated_at":    f"ALTER TABLE presupuestos ADD COLUMN updated_at {ts_type}",
-        "archivos_keys": f"ALTER TABLE presupuestos ADD COLUMN archivos_keys {json_type}",
+        "image_path":      "ALTER TABLE presupuestos ADD COLUMN image_path TEXT",
+        "updated_at":      f"ALTER TABLE presupuestos ADD COLUMN updated_at {ts_type}",
+        "archivos_keys":   f"ALTER TABLE presupuestos ADD COLUMN archivos_keys {json_type}",
+        "nombre_cliente":  "ALTER TABLE presupuestos ADD COLUMN nombre_cliente TEXT",
     }
     for col, sql in new_cols.items():
         if col not in existing:

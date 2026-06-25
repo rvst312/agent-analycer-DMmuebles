@@ -62,7 +62,7 @@ async def _db_set_error(estimate_id: str, error_msg: str) -> None:
         logger.error(f"Error actualizando estado a 'error' en DB para {estimate_id}: {e}")
 
 
-async def process_estimate(estimate_id: str, file_paths: List[str], cliente_id: str, content_types: List[str]):
+async def process_estimate(estimate_id: str, file_paths: List[str], cliente_id: str, content_types: List[str], notas_contexto: str = ""):
     """Run the graph in background, streaming SSE events as each node completes."""
     logger.info(f"Iniciando procesamiento en background para estimate_id: {estimate_id}")
     try:
@@ -148,6 +148,7 @@ async def create_estimate(
     background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
     cliente_id: str = Form(...),
+    nombre_cliente: str = Form(""),
     notas_contexto: str = Form(""),
 ):
     if not files:
@@ -185,6 +186,7 @@ async def create_estimate(
             record = PresupuestoModel(
                 id=estimate_id,
                 cliente_id=cliente_id,
+                nombre_cliente=nombre_cliente or None,
                 plano_id=estimate_id,
                 image_path=filenames[0],
                 archivos_keys=filenames,
@@ -198,7 +200,7 @@ async def create_estimate(
         logger.error(f"Error registrando estimate en DB: {e}")
 
     start(estimate_id)
-    background_tasks.add_task(process_estimate, estimate_id, file_paths, cliente_id, content_types)
+    background_tasks.add_task(process_estimate, estimate_id, file_paths, cliente_id, content_types, notas_contexto)
 
     return {"estimate_id": estimate_id, "status": "processing", "num_files": len(file_paths)}
 
@@ -304,6 +306,7 @@ async def list_estimates():
                     "estimate_id": r.plano_id,
                     "status": r.status,
                     "cliente_id": r.cliente_id,
+                    "nombre_cliente": r.nombre_cliente,
                     "total": r.total,
                     "image_url": image_url,
                     "created_at": r.created_at.isoformat() if r.created_at else None,
@@ -451,6 +454,91 @@ async def save_pricing_corrections(estimate_id: str, body: dict):
         raise HTTPException(status_code=500, detail="Error saving price feedback")
 
 
+@router.post("/{estimate_id}/generate-description", status_code=status.HTTP_200_OK)
+async def generate_group_description(estimate_id: str, body: dict):
+    """
+    Use Claude to generate a single 3-line commercial description for a
+    budget group (one Holded item per ref, e.g. "A03", "E02"...).
+    Body: { "ref": "A03", "lineas": [...LineaPresupuesto] }
+    """
+    import anthropic as _anthropic
+
+    ref = body.get("ref", "")
+    lineas = body.get("lineas", [])
+
+    if not lineas:
+        raise HTTPException(status_code=400, detail="lineas is required")
+
+    lineas_text = "\n".join(
+        f"- {l.get('descripcion', '')} | cant: {l.get('cantidad', 1)} | precio_unitario: {l.get('precio_unitario', 0)} €"
+        for l in lineas
+    )
+
+    prompt = f"""Eres un redactor técnico para una empresa de carpintería y mobiliario a medida.
+Genera una descripción profesional para el grupo de presupuesto "{ref}" con las siguientes piezas:
+
+{lineas_text}
+
+La descripción debe tener EXACTAMENTE 3 líneas, en este formato:
+1. Primera línea: "Suministro e instalación de [descripción breve del mueble, incluyendo tipo y elementos principales: puertas, cajones, bandejas, etc.]." (ej: "Suministro e instalación de armario con 3 puertas abatibles, 2 cajones interiores y 3 bandejas extraíbles.")
+2. Segunda línea: "Medidas aprox: [ancho]x[alto]" (ej: "Medidas aprox: 150x250")
+3. Tercera línea: "Material y terminación: [material y acabado exterior], [material y acabado interior]" (ej: "Material y terminación: Exterior laca blanca, interior melamina textil")
+
+Sé conciso y técnico. No repitas información. Usa el español de España. No incluyas precios. No incluyas herrajes ni observaciones de montaje.
+Devuelve SOLO el texto de la descripción (máximo 3 líneas), sin cabeceras ni explicaciones."""
+
+    try:
+        client = _anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        description = message.content[0].text.strip()
+        return {"description": description}
+    except Exception as e:
+        logger.error(f"Error generating description for {estimate_id}/{ref}: {e}")
+        raise HTTPException(status_code=500, detail="Error generando descripción con IA")
+
+
+@router.post("/{estimate_id}/generate-title", status_code=status.HTTP_200_OK)
+async def generate_estimate_title(estimate_id: str, body: dict):
+    """
+    Use Claude to generate a single short project title (4-5 words) for the
+    whole estimate. Sent to Holded as one header item at 0 € (editable).
+    Body: { "lineas": [...LineaPresupuesto] }
+    """
+    import anthropic as _anthropic
+
+    lineas = body.get("lineas", [])
+    if not lineas:
+        raise HTTPException(status_code=400, detail="lineas is required")
+
+    lineas_text = "\n".join(f"- {l.get('descripcion', '')}" for l in lineas)
+
+    prompt = f"""Eres un redactor técnico para una empresa de carpintería y mobiliario a medida.
+Genera un título corto (4-5 palabras) que resuma el proyecto completo de presupuesto, a partir de estas piezas:
+
+{lineas_text}
+
+Ej: "Armarios y puertas de paso", "Cocina y vestidor a medida".
+No incluyas precios ni códigos de referencia. Usa el español de España.
+Devuelve SOLO el título, sin comillas ni explicaciones."""
+
+    try:
+        client = _anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=50,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        titulo = message.content[0].text.strip()
+        return {"titulo": titulo}
+    except Exception as e:
+        logger.error(f"Error generating title for {estimate_id}: {e}")
+        raise HTTPException(status_code=500, detail="Error generando título con IA")
+
+
 @router.get("/{estimate_id}", status_code=status.HTTP_200_OK)
 async def get_estimate_status(estimate_id: str):
     """
@@ -504,6 +592,7 @@ async def get_estimate_status(estimate_id: str):
                 "status": current_status,
                 "plano_id": state_values.get("plano_id"),
                 "cliente_id": state_values.get("cliente_id"),
+                "nombre_cliente": db_record.nombre_cliente,
                 "image_url": (
                     storage.get_url(os.path.basename(archivos_paths[0]))
                     if archivos_paths else None
@@ -532,6 +621,7 @@ async def get_estimate_status(estimate_id: str):
         "status": db_record.status,
         "plano_id": db_record.plano_id,
         "cliente_id": db_record.cliente_id,
+        "nombre_cliente": db_record.nombre_cliente,
         "image_url": image_url,
         "image_urls": _all_image_urls(estimate_id, archivos_keys=db_record.archivos_keys),
     }
