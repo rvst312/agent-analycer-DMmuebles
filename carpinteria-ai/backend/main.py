@@ -5,6 +5,9 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from db.persistence import close_checkpointer_pool, get_checkpointer, init_db
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +16,14 @@ from rag.chroma_client import ChromaClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+from core.tracing import is_tracing_enabled
+if is_tracing_enabled():
+    project = os.environ.get("LANGCHAIN_PROJECT", "carpinteria-ai")
+    logger.info(f"LangSmith tracing ACTIVO — proyecto: {project!r}")
+else:
+    logger.info("LangSmith tracing INACTIVO (LANGCHAIN_TRACING_V2 no es 'true')")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
