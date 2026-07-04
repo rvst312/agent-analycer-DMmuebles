@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import anthropic
+from core.tracing import get_anthropic_client
 from api.schemas.estimate import (
     AnalisisArmario, ComponenteArmario, ItemInteriorArmario,
     ModuloArmario, PlanoAnalizado, PuertaArmario, TipoComponente,
@@ -413,7 +414,7 @@ def analyze_plan(
             raw_reasoning="", error=f"Corrupt or invalid base64: {str(e)}"
         )
 
-    client = anthropic.Anthropic()
+    client = get_anthropic_client()
 
     # ── PASADA 1: códigos de vista ────────────────────────────────────────────
     view_codes = _detect_view_codes(client, image_base64, media_type, plano_id)
