@@ -48,6 +48,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Carpintería AI API", lifespan=lifespan)
 
+# Rate limiting (protección de fuerza bruta, sobre todo en /auth/login)
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+from core.rate_limit import limiter
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 import storage as _storage
 
 # Local uploads dir — always created so the vision agent can write temp files.
@@ -65,10 +74,15 @@ else:
 _cors_env = os.environ.get("CORS_ORIGINS", "*")
 _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env != "*" else ["*"]
 
+# Con orígenes comodín ("*") NO se pueden permitir credenciales (los navegadores
+# lo rechazan y es un antipatrón). La app usa JWT por cabecera Authorization, no
+# cookies, así que desactivar credentials en modo "*" es seguro y correcto.
+_allow_credentials = _cors_origins != ["*"]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=True,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -98,11 +112,20 @@ async def serve_file(filename: str):
     Tries local disk first, then falls back to R2 — no public bucket access required.
     """
     from fastapi import HTTPException
-    result = await _storage.fetch(filename)
+    try:
+        result = await _storage.fetch(filename)
+    except _storage.UnsafeFilenameError:
+        # Intento de path traversal (p.ej. ../../etc/passwd)
+        raise HTTPException(status_code=400, detail="Invalid filename")
     if result is None:
         raise HTTPException(status_code=404, detail="File not found")
     data, mime = result
-    return Response(content=data, media_type=mime)
+    # Los nombres son únicos e inmutables (uuid por estimate): el navegador puede
+    # cachearlos — el visor no re-descarga las 11 páginas al navegar/recargar.
+    return Response(
+        content=data, media_type=mime,
+        headers={"Cache-Control": "public, max-age=604800, immutable"},
+    )
 
 
 app.include_router(auth_router)

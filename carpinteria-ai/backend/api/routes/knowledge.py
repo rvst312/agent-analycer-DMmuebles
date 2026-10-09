@@ -24,6 +24,62 @@ router = APIRouter(
     dependencies=[Depends(verify_admin_token)]
 )
 
+@router.get("/tarifa", response_model=dict)
+def get_tarifa():
+    """Devuelve la tarifa paramétrica (tarifa_config.json) para el editor."""
+    from agents import tarifa
+    return tarifa.reload()  # siempre fresco desde disco
+
+
+@router.put("/tarifa", response_model=dict)
+def update_tarifa(nuevo_cfg: dict):
+    """
+    Guarda la tarifa paramétrica editada desde la app y la recarga en caliente
+    (los siguientes presupuestos usan ya los valores nuevos).
+    """
+    from agents import tarifa
+    try:
+        cfg = tarifa.save_config(nuevo_cfg)
+        return {"status": "success", "tarifa": cfg}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error guardando la tarifa: {e}")
+
+
+@router.get("/lecciones", response_model=list)
+async def listar_lecciones():
+    """Reglas aprendidas de correcciones (se inyectan en cada análisis)."""
+    from db.models import LeccionModel
+    from db.persistence import async_session_maker
+    from sqlalchemy import select
+
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(LeccionModel).order_by(LeccionModel.created_at.desc()).limit(100)
+        )
+        return [{"id": l.id, "texto": l.texto, "activo": l.activo == "si",
+                 "cliente_id": l.cliente_id, "fecha": l.created_at.isoformat() if l.created_at else None}
+                for l in result.scalars().all()]
+
+
+@router.delete("/lecciones/{leccion_id}", response_model=dict)
+async def desactivar_leccion(leccion_id: str):
+    """Desactiva una lección aprendida (deja de inyectarse en los análisis)."""
+    from db.models import LeccionModel
+    from db.persistence import async_session_maker
+    from sqlalchemy import select
+
+    async with async_session_maker() as session:
+        result = await session.execute(select(LeccionModel).where(LeccionModel.id == leccion_id))
+        leccion = result.scalar_one_or_none()
+        if not leccion:
+            raise HTTPException(status_code=404, detail="Lección no encontrada")
+        leccion.activo = "no"
+        await session.commit()
+    return {"status": "success"}
+
+
 @router.get("/categories", response_model=List[str])
 def get_categories():
     """Devuelve las categorías únicas existentes en la base de precios."""

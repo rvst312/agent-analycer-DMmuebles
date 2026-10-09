@@ -32,9 +32,33 @@ def is_cloud() -> bool:
     return bool(_BUCKET and _ENDPOINT and _ACCESS_KEY and _SECRET_KEY)
 
 
+class UnsafeFilenameError(ValueError):
+    """El nombre de archivo intenta salir del directorio de uploads."""
+
+
+def safe_key(filename: str) -> str:
+    """
+    Normaliza un nombre de archivo y garantiza que no escapa de UPLOAD_DIR.
+    Colapsa '..', rechaza rutas absolutas y separadores hacia atrás.
+    Se usa tanto para el disco local como para la Key de R2.
+    """
+    if not filename or "\x00" in filename:
+        raise UnsafeFilenameError("nombre de archivo vacío o inválido")
+    # Colapsa componentes '..' y '.'; quita cualquier '/' inicial (absoluto).
+    normalized = os.path.normpath("/" + filename.replace("\\", "/")).lstrip("/")
+    if not normalized or normalized.startswith(".."):
+        raise UnsafeFilenameError(f"ruta no permitida: {filename!r}")
+    return normalized
+
+
 def local_path(filename: str) -> str:
-    """Full filesystem path for a given filename."""
-    return os.path.join(UPLOAD_DIR, filename)
+    """Ruta absoluta en disco para un archivo, validada contra path traversal."""
+    key = safe_key(filename)
+    base = os.path.realpath(UPLOAD_DIR)
+    full = os.path.realpath(os.path.join(base, key))
+    if full != base and not full.startswith(base + os.sep):
+        raise UnsafeFilenameError(f"ruta fuera de UPLOAD_DIR: {filename!r}")
+    return full
 
 
 def get_url(filename: str) -> str:
@@ -55,13 +79,14 @@ async def save(file_bytes: bytes, filename: str, content_type: str) -> None:
     - Always writes to local disk so the vision agent can read it during this session.
     - If R2/S3 is configured, also uploads to the bucket for durable storage.
     """
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    with open(local_path(filename), "wb") as fh:
+    lp = local_path(filename)  # valida path traversal antes de escribir
+    os.makedirs(os.path.dirname(lp), exist_ok=True)
+    with open(lp, "wb") as fh:
         fh.write(file_bytes)
 
     if is_cloud():
         try:
-            await _s3_upload(file_bytes, filename, content_type)
+            await _s3_upload(file_bytes, safe_key(filename), content_type)
             logger.info(f"storage: uploaded {filename} → R2 bucket '{_BUCKET}'")
         except Exception as e:
             # R2 failure is non-fatal: the file is already on local disk so the
@@ -88,13 +113,60 @@ async def fetch(filename: str) -> tuple[bytes, str] | None:
             import aioboto3  # type: ignore
             session = aioboto3.Session()
             async with session.client("s3", **_s3_client_kwargs()) as s3:
-                obj = await s3.get_object(Bucket=_BUCKET, Key=filename)
+                obj = await s3.get_object(Bucket=_BUCKET, Key=safe_key(filename))
                 body = await obj["Body"].read()
             mime = obj.get("ContentType") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
             return body, mime
         except Exception as e:
             logger.error(f"storage: R2 fetch failed for {filename}: {e}")
     return None
+
+
+async def delete_prefix(prefix: str) -> int:
+    """
+    Borra TODOS los archivos cuyo nombre empieza por `prefix` (disco local y,
+    si está configurado, R2). Se usa al eliminar un presupuesto para no dejar
+    huérfanos (PDF original, páginas del visor, recortes de partidas).
+    Devuelve el nº de archivos borrados.
+    """
+    import glob
+
+    borrados = 0
+    safe = safe_key(prefix)
+    # Disco local
+    base = os.path.realpath(UPLOAD_DIR)
+    for path in glob.glob(os.path.join(base, safe + "*")):
+        try:
+            os.remove(path)
+            borrados += 1
+        except OSError as e:
+            logger.warning(f"storage: no se pudo borrar {path}: {e}")
+    # R2: listado por prefijo
+    if is_cloud():
+        try:
+            import aioboto3  # type: ignore
+            session = aioboto3.Session()
+            async with session.client("s3", **_s3_client_kwargs()) as s3:
+                token = None
+                while True:
+                    kwargs = {"Bucket": _BUCKET, "Prefix": safe}
+                    if token:
+                        kwargs["ContinuationToken"] = token
+                    resp = await s3.list_objects_v2(**kwargs)
+                    keys = [o["Key"] for o in resp.get("Contents", [])]
+                    if keys:
+                        await s3.delete_objects(
+                            Bucket=_BUCKET,
+                            Delete={"Objects": [{"Key": k} for k in keys]},
+                        )
+                        borrados += len(keys)
+                    if not resp.get("IsTruncated"):
+                        break
+                    token = resp.get("NextContinuationToken")
+            logger.info(f"storage: borrados {borrados} archivos con prefijo '{safe}'")
+        except Exception as e:
+            logger.warning(f"storage: fallo borrando prefijo '{safe}' en R2: {e}")
+    return borrados
 
 
 async def delete(filename: str) -> None:
@@ -108,7 +180,7 @@ async def delete(filename: str) -> None:
 
     if is_cloud():
         try:
-            await _s3_delete(filename)
+            await _s3_delete(safe_key(filename))
             logger.info(f"storage: deleted {filename} from R2 bucket '{_BUCKET}'")
         except Exception as e:
             logger.warning(f"storage: R2 delete failed for {filename}: {e}")

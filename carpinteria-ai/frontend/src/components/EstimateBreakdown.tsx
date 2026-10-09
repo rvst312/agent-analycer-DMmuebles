@@ -1,9 +1,10 @@
 "use client";
 
 import { LineaPresupuesto, PriceCorrection } from '@/types/estimate';
-import { ChevronDown, ChevronUp, BrainCircuit, CheckCircle2, Tag, Trash2, Plus, PenLine, Search, Sparkles, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, BrainCircuit, CheckCircle2, Tag, Trash2, Plus, PenLine, Search, Sparkles, Loader2, Wand2 } from 'lucide-react';
 import KbSearchModal from '@/components/KbSearchModal';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { authHeaders } from '@/lib/auth';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -20,7 +21,13 @@ interface EstimateBreakdownProps {
   onSavePriceFeedback?: (corrections: PriceCorrection[]) => void;
   isSavingFeedback?: boolean;
   onDiscountsChange?: (totals: { subtotal: number; iva: number; total: number }) => void;
+  onGroupDiscountsChange?: (discounts: Record<string, number>) => void;  // ref → % (para Holded)
   clienteId?: string;
+  titulosGrupo?: Record<string, string>;        // ref → "A06 - Armario Dormitorio 2"
+  descripcionesGrupo?: Record<string, string>;  // ref → descripción comercial precargada
+  imagenesGrupo?: Record<string, string>;       // ref → url del recorte del plano
+  tituloProyectoInicial?: string;               // calle+número detectados en el plano
+  onCorregirPartida?: (ref: string, instruccion: string) => Promise<void>;  // corrección IA por partida
 }
 
 const PRESET_DISCOUNTS = [5, 10, 15, 20, 25];
@@ -106,7 +113,8 @@ function newBlankLine(refKey: string): LineaPresupuesto {
 
 export default function EstimateBreakdown({
   estimateId, lineas, subtotal, onChange, onDescriptionsChange, onTitleChange, originalLineas,
-  onSavePriceFeedback, isSavingFeedback, onDiscountsChange, clienteId,
+  onSavePriceFeedback, isSavingFeedback, onDiscountsChange, onGroupDiscountsChange, clienteId,
+  titulosGrupo, descripcionesGrupo, imagenesGrupo, tituloProyectoInicial, onCorregirPartida,
 }: EstimateBreakdownProps) {
   const groups  = groupByRef(lineas);
   const refKeys = Array.from(groups.keys());
@@ -115,6 +123,12 @@ export default function EstimateBreakdown({
   const [editingRef, setEditingRef]       = useState<Record<string, string>>({});
   const [kbSearchRefKey, setKbSearchRefKey] = useState<string | null>(null);
   const [groupDiscounts, setGroupDiscounts] = useState<Record<string, number>>({});
+  // Corrección con IA por partida
+  const [corrOpenRef, setCorrOpenRef] = useState<string | null>(null);
+  const [corrTexts, setCorrTexts] = useState<Record<string, string>>({});
+  const [corrBusyRef, setCorrBusyRef] = useState<string | null>(null);
+  // Expone los descuentos por grupo a la página (se envían al aprobar → Holded)
+  useEffect(() => { onGroupDiscountsChange?.(groupDiscounts); }, [groupDiscounts, onGroupDiscountsChange]);
   const [generatingDesc, setGeneratingDesc] = useState<Record<string, boolean>>({});
   const [generatingTitle, setGeneratingTitle] = useState(false);
   const [titulo, setTitulo] = useState('');
@@ -124,13 +138,20 @@ export default function EstimateBreakdown({
 
   useEffect(() => { onTitleChange?.(titulo); }, [titulo, onTitleChange]);
 
+  // Precarga el título con el proyecto (calle + número) detectado en el plano.
+  // Solo si el usuario no ha escrito nada todavía.
+  useEffect(() => {
+    if (tituloProyectoInicial && !titulo) setTitulo(tituloProyectoInicial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tituloProyectoInicial]);
+
   const generateTitle = async () => {
     if (!estimateId || lineas.length === 0) return;
     setGeneratingTitle(true);
     try {
       const res = await fetch(`${BASE_URL}/estimates/${estimateId}/generate-title`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ lineas }),
       });
       if (res.ok) {
@@ -147,7 +168,7 @@ export default function EstimateBreakdown({
     try {
       const res = await fetch(`${BASE_URL}/estimates/${estimateId}/generate-description`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ ref: refKey, lineas: groupLineas }),
       });
       if (res.ok) {
@@ -183,11 +204,38 @@ export default function EstimateBreakdown({
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set(refKeys));
   const [descriptions, setDescriptions] = useState<Record<string, string>>(() => {
     const d: Record<string, string> = {};
-    for (const k of refKeys) d[k] = buildAutoDescription(k, groups.get(k)!.lineas);
+    // Precarga la descripción generada por el backend; si no hay, la autogenerada.
+    for (const k of refKeys) d[k] = descripcionesGrupo?.[k] || buildAutoDescription(k, groups.get(k)!.lineas);
     return d;
   });
 
   useEffect(() => { onDescriptionsChange?.(descriptions); }, [descriptions, onDescriptionsChange]);
+
+  // Sincroniza las descripciones que llegan del backend: aplica cada clave la
+  // primera vez y también cuando el backend la CAMBIA (p.ej. tras una
+  // corrección con IA). Las ediciones manuales del usuario se conservan
+  // mientras el valor del backend para esa clave no cambie.
+  const lastAppliedDescRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    if (!descripcionesGrupo) return;
+    const cambios: Record<string, string> = {};
+    for (const [k, v] of Object.entries(descripcionesGrupo)) {
+      if (v && lastAppliedDescRef.current[k] !== v) cambios[k] = v;
+    }
+    if (!Object.keys(cambios).length) return;
+    setDescriptions(prev => {
+      const next = { ...prev };
+      for (const [k, v] of Object.entries(cambios)) {
+        const auto = buildAutoDescription(k, groups.get(k)?.lineas ?? []);
+        const previoBackend = lastAppliedDescRef.current[k];
+        // aplicar si: no hay texto, sigue en el auto, o venía del backend anterior
+        if (!next[k] || next[k] === auto || next[k] === previoBackend) next[k] = v;
+        lastAppliedDescRef.current[k] = v;
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [descripcionesGrupo]);
 
   useEffect(() => {
     const g = groupByRef(lineas);
@@ -285,16 +333,22 @@ export default function EstimateBreakdown({
   return (
     <div className="p-3 space-y-2">
 
-      {/* Project title — sent to Holded as a single header item at 0 €, editable */}
+      {/* Project title — sent to Holded as a single header item at 0 €, editable.
+          Es la calle + número del proyecto: si está vacío se marca en ROJO y no
+          se puede enviar a Holded. */}
       <div className="mb-2">
-        <label className="block text-[11px] font-medium text-gray-400 mb-1">
-          Título del proyecto (ítem a 0 € en Holded, editable)
+        <label className={`block text-[11px] font-medium mb-1 ${titulo.trim() ? "text-gray-400" : "text-red-500"}`}>
+          Título del proyecto — calle y número {titulo.trim() ? "(ítem a 0 € en Holded, editable)" : "· OBLIGATORIO antes de enviar a Holded"}
         </label>
         <div className="relative">
           <input
             type="text"
-            className="w-full text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg px-3 py-2 pr-9 focus:outline-none focus:ring-1 focus:ring-gray-300"
-            placeholder="Ej: Puertas y rodapié, Zurbano 93"
+            className={`w-full text-sm font-medium text-gray-700 border rounded-lg px-3 py-2 pr-9 focus:outline-none focus:ring-1 ${
+              titulo.trim()
+                ? "bg-white border-gray-200 focus:ring-gray-300"
+                : "bg-red-50 border-red-400 focus:ring-red-400 placeholder:text-red-300"
+            }`}
+            placeholder="Ej: Goya 23"
             value={titulo}
             onChange={e => setTitulo(e.target.value)}
           />
@@ -345,8 +399,13 @@ export default function EstimateBreakdown({
                   }}
                 />
               ) : (
-                <button type="button" onClick={() => toggleGroup(refKey)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
+                <button type="button" onClick={() => toggleGroup(refKey)} className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden text-left">
                   <span className="font-mono font-bold text-white text-sm tracking-widest shrink-0">{refKey}</span>
+                  {titulosGrupo?.[refKey] && (
+                    <span className="text-white font-semibold text-sm truncate min-w-0">
+                      {titulosGrupo[refKey].replace(new RegExp(`^${refKey}\\s*-\\s*`), '')}
+                    </span>
+                  )}
                   <span className="text-white/60 text-xs truncate hidden sm:block">{desc.split('\n')[0]}</span>
                   <span className="text-white/50 text-xs shrink-0">{groupLineas.length} {groupLineas.length === 1 ? 'pieza' : 'piezas'}</span>
                   {pendingCount > 0 && (
@@ -374,6 +433,13 @@ export default function EstimateBreakdown({
                   className="p-1 rounded text-white/50 hover:text-white hover:bg-white/20 transition-colors">
                   <Plus className="w-3.5 h-3.5" />
                 </button>
+                {onCorregirPartida && (
+                  <button type="button" title="Corregir esta partida con IA"
+                    onClick={() => { setCorrOpenRef(prev => prev === refKey ? null : refKey); if (!isOpen) toggleGroup(refKey); }}
+                    className={`p-1 rounded transition-colors ${corrOpenRef === refKey ? "text-violet-300 bg-white/20" : "text-white/50 hover:text-violet-300 hover:bg-white/20"}`}>
+                    <Wand2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 <button type="button" title="Eliminar grupo"
                   onClick={() => { if (confirm(`¿Eliminar el grupo "${refKey}"?`)) handleDeleteGroup(refKey); }}
                   className="p-1 rounded text-white/50 hover:text-red-300 hover:bg-white/20 transition-colors">
@@ -389,6 +455,59 @@ export default function EstimateBreakdown({
             {/* ── Expanded content ── */}
             {isOpen && (
               <>
+                {/* Corrección con IA de ESTA partida */}
+                {onCorregirPartida && corrOpenRef === refKey && (
+                  <div className="px-3 pt-2.5 bg-violet-50/60 border-t border-violet-100">
+                    <p className="text-[11px] font-medium text-violet-700 mb-1 flex items-center gap-1">
+                      <Wand2 className="w-3 h-3" /> Corregir esta partida — describe qué está mal y recalculo
+                    </p>
+                    <textarea
+                      className="w-full text-xs text-gray-700 bg-white border border-violet-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-violet-400 resize-none"
+                      rows={2}
+                      placeholder={'Ej: "Las puertas son 2 hojas abatibles de 60x240cm, lisas, laca blanca"'}
+                      value={corrTexts[refKey] ?? ''}
+                      onChange={e => setCorrTexts(prev => ({ ...prev, [refKey]: e.target.value }))}
+                      disabled={corrBusyRef === refKey}
+                    />
+                    <div className="flex justify-end gap-2 pb-2 pt-1">
+                      <button type="button" onClick={() => setCorrOpenRef(null)}
+                        className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1">Cancelar</button>
+                      <button type="button"
+                        disabled={corrBusyRef === refKey || !(corrTexts[refKey] ?? '').trim()}
+                        onClick={async () => {
+                          const texto = (corrTexts[refKey] ?? '').trim();
+                          if (!texto) return;
+                          if (!confirm(`Se recalcularán las líneas de "${refKey}" (se perderán ediciones manuales en esta partida). ¿Continuar?`)) return;
+                          setCorrBusyRef(refKey);
+                          try {
+                            await onCorregirPartida(refKey, texto);
+                            setCorrTexts(prev => ({ ...prev, [refKey]: '' }));
+                            setCorrOpenRef(null);
+                          } finally {
+                            setCorrBusyRef(null);
+                          }
+                        }}
+                        className="text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-md disabled:opacity-40 flex items-center gap-1">
+                        {corrBusyRef === refKey ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                        {corrBusyRef === refKey ? 'Recalculando…' : 'Aplicar y recalcular'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {/* Recorte del plano de esta partida */}
+                {imagenesGrupo?.[refKey] && (
+                  <div className="px-3 pt-2.5 bg-gray-50 border-t border-gray-100">
+                    <a href={`${BASE_URL}${imagenesGrupo[refKey]}`} target="_blank" rel="noreferrer"
+                       title="Ver recorte a tamaño completo">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`${BASE_URL}${imagenesGrupo[refKey]}`}
+                        alt={`Plano de ${refKey}`}
+                        className="w-full max-h-56 object-contain bg-white border border-gray-200 rounded-lg hover:border-gray-400 transition-colors"
+                      />
+                    </a>
+                  </div>
+                )}
                 {/* Description with AI generation button */}
                 <div className="px-3 pt-2.5 pb-2 bg-gray-50 border-t border-gray-100">
                   <div className="relative">
@@ -415,15 +534,17 @@ export default function EstimateBreakdown({
                   </div>
                 </div>
 
-                {/* Line items table */}
+                {/* Line items table — min-width fija: la columna Descripción se
+                    queda todo el espacio restante y el exceso hace scroll-x en
+                    vez de apilar las palabras en vertical. */}
                 <div className="overflow-x-auto border-t border-gray-100">
-                  <table className="w-full text-sm text-left">
+                  <table className="w-full min-w-[560px] table-fixed text-sm text-left">
                     <thead className="bg-gray-50 text-gray-400 text-xs border-b border-gray-100">
                       <tr>
-                        <th className="px-2.5 py-1.5 w-20 font-medium">Código</th>
+                        <th className="px-2.5 py-1.5 w-16 font-medium">Código</th>
                         <th className="px-2.5 py-1.5 font-medium">Descripción</th>
-                        <th className="px-2.5 py-1.5 w-16 text-center font-medium">Cant.</th>
-                        <th className="px-2.5 py-1.5 w-28 text-right font-medium">P. Unit. €</th>
+                        <th className="px-2.5 py-1.5 w-14 text-center font-medium">Cant.</th>
+                        <th className="px-2.5 py-1.5 w-24 text-right font-medium">P. Unit. €</th>
                         <th className="px-2.5 py-1.5 w-24 text-right font-medium">Subtotal €</th>
                         <th className="px-1 py-1.5 w-7" />
                       </tr>
@@ -451,6 +572,11 @@ export default function EstimateBreakdown({
                                 <span className="inline-block mt-0.5 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
                                   Sin precio
                                 </span>
+                              )}
+                              {linea.explicacion && (
+                                <p className="mt-0.5 text-[11px] leading-snug text-gray-400" title="Cómo se ha calculado este precio">
+                                  🧮 {linea.explicacion}
+                                </p>
                               )}
                             </td>
 

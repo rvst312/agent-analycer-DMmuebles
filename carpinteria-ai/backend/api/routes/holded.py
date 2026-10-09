@@ -3,10 +3,15 @@ import os
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from api.auth import verify_jefe_obra_token
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/holded", tags=["holded"])
+router = APIRouter(
+    prefix="/holded",
+    tags=["holded"],
+    dependencies=[Depends(verify_jefe_obra_token)],
+)
 logger = logging.getLogger(__name__)
 
 HOLDED_API_KEY = os.getenv("HOLDED_API_KEY", "")
@@ -24,11 +29,30 @@ class CreateContactBody(BaseModel):
     nif: Optional[str] = None
 
 
+# ── Caché de contactos ────────────────────────────────────────────────────────
+# La lista de Holded (~400 contactos, varias páginas de su API) se pedía a
+# Holded en CADA carga del formulario. TTL de 10 min + invalidación al crear
+# un contacto; ?refresh=1 fuerza recarga.
+_CONTACTS_TTL = 600.0
+_contacts_cache: dict = {"data": None, "ts": 0.0}
+
+
+def invalidar_cache_contactos() -> None:
+    _contacts_cache["data"] = None
+    _contacts_cache["ts"] = 0.0
+
+
 @router.get("/contacts")
-async def get_contacts():
-    """Return ALL Holded contacts as [{id, name}], paginating through every page."""
+async def get_contacts(refresh: bool = False):
+    """Return ALL Holded contacts as [{id, name}] (cacheado 10 min)."""
+    import time as _time
+
     if not HOLDED_API_KEY:
         raise HTTPException(status_code=503, detail="HOLDED_API_KEY not configured")
+
+    if (not refresh and _contacts_cache["data"] is not None
+            and _time.monotonic() - _contacts_cache["ts"] < _CONTACTS_TTL):
+        return _contacts_cache["data"]
 
     all_contacts: list = []
     page = 1
@@ -64,7 +88,7 @@ async def get_contacts():
                 break
             page += 1
 
-    return sorted(
+    resultado = sorted(
         [
             {"id": c.get("id"), "name": c.get("name") or "Sin nombre"}
             for c in all_contacts
@@ -72,6 +96,10 @@ async def get_contacts():
         ],
         key=lambda x: x["name"].lower(),
     )
+    import time as _time
+    _contacts_cache["data"] = resultado
+    _contacts_cache["ts"] = _time.monotonic()
+    return resultado
 
 
 @router.post("/contacts", status_code=201)
@@ -116,4 +144,5 @@ async def create_contact(body: CreateContactBody):
         raise HTTPException(status_code=502, detail="Holded no pudo crear el contacto")
 
     logger.info(f"Created Holded contact: {contact_id} ({nombre})")
+    invalidar_cache_contactos()  # que el nuevo cliente aparezca al instante
     return {"id": contact_id, "name": nombre}

@@ -5,6 +5,7 @@ import { ComponenteArmario } from "@/types/estimate";
 import { Button } from "@/components/ui/button";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { authHeaders } from "@/lib/auth";
 
 const TIPOS = ["tablero", "puerta", "cajon", "herraje", "barra", "estante", "armario", "otro"];
 
@@ -43,7 +44,7 @@ export default function ComponentsEditor({ estimateId, originalComponents, onClo
     try {
       const res = await fetch(`${BASE_URL}/estimates/${estimateId}/learn-components`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           componentes_originales: originalComponents,
           componentes_corregidos: components,

@@ -25,6 +25,22 @@ precios_collection = chroma_client.get_or_create_collection(
     embedding_function=emb_fn
 )
 
+# ── Umbrales de distancia RAG ────────────────────────────────────────────────
+# La colección usa la métrica por defecto de ChromaDB (L2²) y el modelo
+# all-MiniLM-L6-v2 produce embeddings NORMALIZADOS (norma=1), así que
+# L2² = 2·(1 - coseno): el ranking es idéntico al de coseno, solo cambia la escala.
+#
+# Calibrado empíricamente sobre la base de precios real:
+#   - aciertos correctos:  ~0.12–0.67
+#   - falsos (otro producto/material inexistente): ~0.83 en adelante
+# Por eso 0.7 separa bien. Regla de negocio: por encima del umbral se marca el
+# precio como PENDIENTE (mejor pendiente que cobrar el precio de otro material).
+# El antiguo valor 1.0 dejaba pasar falsos (p.ej. una query de armario cobraba
+# una puerta de paso a dist≈0.91). Ambos umbrales son configurables por env.
+RAG_MAX_DISTANCE = float(os.getenv("RAG_MAX_DISTANCE", "0.7"))
+# El feedback humano SOBREESCRIBE precios existentes, así que es más estricto.
+FEEDBACK_MAX_DISTANCE = float(os.getenv("FEEDBACK_MAX_DISTANCE", "0.6"))
+
 def upsert_precio(id: str, texto: str, metadatos: dict) -> None:
     """
     Inserta o actualiza un precio en ChromaDB.
@@ -233,13 +249,13 @@ def query_precios(texto: str, cliente_id: str, version: Optional[str] = None, n_
 def apply_price_feedback(cliente_id: str, descripcion: str, precio_corregido: float) -> bool:
     """
     Find the best matching ChromaDB entry for this description+client and update its price.
-    Returns True if a match was found and updated (distance < 0.6), False otherwise.
+    Returns True if a match was found and updated (distance <= FEEDBACK_MAX_DISTANCE), False otherwise.
     """
     results = query_precios(descripcion, cliente_id, n_results=1)
     if not results:
         return False
     best = results[0]
-    if best.get("distancia", 1.0) > 0.6:
+    if best.get("distancia", 1.0) > FEEDBACK_MAX_DISTANCE:
         return False
     try:
         update_precio_metadata(best["id"], {"precio_unitario": precio_corregido})

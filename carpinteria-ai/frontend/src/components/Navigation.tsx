@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { FileUp, LayoutDashboard, Database, LogOut } from "lucide-react";
+import { FileUp, LayoutDashboard, Database, Calculator, LogOut } from "lucide-react";
 import { clearToken } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +10,7 @@ const LINKS = [
   { name: "Nuevo Presupuesto", href: "/",          icon: FileUp },
   { name: "Panel de Control",  href: "/dashboard", icon: LayoutDashboard },
   { name: "Base de Precios",   href: "/knowledge", icon: Database },
+  { name: "Tarifa",            href: "/tarifa",    icon: Calculator },
 ];
 
 export function Navigation() {

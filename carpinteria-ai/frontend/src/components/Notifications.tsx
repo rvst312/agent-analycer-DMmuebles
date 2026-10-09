@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { toast } from "sonner";
+import { authHeaders } from "@/lib/auth";
 
 interface Estimate {
   estimate_id: string;
@@ -18,7 +19,7 @@ export function Notifications() {
     const fetchEstimates = async () => {
       try {
         const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-        const res = await fetch(`${baseUrl}/estimates`);
+        const res = await fetch(`${baseUrl}/estimates`, { headers: authHeaders() });
         if (res.ok) {
           const data = await res.json();
           const estimates: Estimate[] = data.estimates || [];

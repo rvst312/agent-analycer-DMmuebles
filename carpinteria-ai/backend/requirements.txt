@@ -18,3 +18,8 @@ python-multipart
 pyjwt
 aiosqlite
 aioboto3
+slowapi
+requests
+pypdfium2
+pillow
+pdfplumber

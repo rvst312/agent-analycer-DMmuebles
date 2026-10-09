@@ -111,6 +111,8 @@ def _agrupar_lineas_por_ref(presupuesto) -> list:
         grupos[key].append(linea)
 
     descripciones_grupo: dict = getattr(presupuesto, "descripciones_grupo", None) or {}
+    titulos_grupo: dict = getattr(presupuesto, "titulos_grupo", None) or {}
+    descuentos_grupo: dict = getattr(presupuesto, "descuentos_grupo", None) or {}
     titulo_proyecto = getattr(presupuesto, "titulo_proyecto", None) or presupuesto.plano_id
 
     items = [{
@@ -125,8 +127,14 @@ def _agrupar_lineas_por_ref(presupuesto) -> list:
             l.subtotal for l in lineas if not l.precio_pendiente
         )
         desc = descripciones_grupo.get(ref) or _generar_descripcion(ref, lineas)
+        # Descuento de grupo aplicado en la app: se refleja en el importe que
+        # llega a Holded y se indica en la descripción de la partida.
+        pct = float(descuentos_grupo.get(ref) or 0)
+        if pct > 0:
+            precio_grupo *= (1 - pct / 100.0)
+            desc = f"{desc}\nDescuento del {pct:g}% incluido."
         items.append({
-            "name": ref,
+            "name": titulos_grupo.get(ref) or ref,
             "desc": desc,
             "units": 1,
             "subtotal": round(precio_grupo, 2),

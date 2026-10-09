@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { EstimateSummary } from "@/types/estimate";
 import { Button } from "@/components/ui/button";
+import { authHeaders } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -43,7 +44,7 @@ function EstimateCard({ est, onDelete }: { est: EstimateSummary; onDelete: (id: 
   const handleDelete = async () => {
     setIsDeleting(true);
     try {
-      const res = await fetch(`${BASE_URL}/estimates/${est.estimate_id}`, { method: "DELETE" });
+      const res = await fetch(`${BASE_URL}/estimates/${est.estimate_id}`, { method: "DELETE", headers: authHeaders() });
       if (res.ok || res.status === 404) { setConfirmDelete(false); onDelete(est.estimate_id); }
       else { alert("Error al eliminar."); setIsDeleting(false); }
     } catch { alert("Error de conexión."); setIsDeleting(false); }
@@ -177,7 +178,7 @@ export default function DashboardPage() {
 
   const fetchEstimates = async () => {
     try {
-      const res = await fetch(`${BASE_URL}/estimates`);
+      const res = await fetch(`${BASE_URL}/estimates`, { headers: authHeaders() });
       if (res.ok) setEstimates((await res.json()).estimates ?? []);
     } catch { /* ignore */ }
     finally { setLoading(false); }
