@@ -3,8 +3,25 @@ from unittest.mock import patch, mock_open, AsyncMock, MagicMock
 import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from graph.workflow import workflow
-from api.schemas.estimate import PlanoAnalizado, Presupuesto, LineaPresupuesto
+from api.schemas.estimate import Partida, PlanoAnalizado, Presupuesto, LineaPresupuesto
 from agents.consolidation_agent import PresupuestoConsolidado
+
+
+@pytest.fixture(autouse=True)
+def sin_infra(monkeypatch):
+    """Aísla el grafo de BD, lecciones, few-shot y recortes del plano."""
+    session = MagicMock()
+    session.commit = AsyncMock()
+    resultado = MagicMock()
+    resultado.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(return_value=resultado)
+    maker = MagicMock()
+    maker.return_value.__aenter__ = AsyncMock(return_value=session)
+    maker.return_value.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr("graph.workflow.async_session_maker", maker)
+    monkeypatch.setattr("graph.workflow.get_recent_corrections", AsyncMock(return_value=[]))
+    monkeypatch.setattr("graph.workflow._generar_recortes_partidas", AsyncMock())
+    monkeypatch.setattr("agents.lecciones.cargar_lecciones", AsyncMock(return_value=[]))
 
 @pytest.fixture
 async def sqlite_checkpointer():
@@ -35,26 +52,14 @@ async def test_workflow_end_to_end(
     mock_crear_presupuesto.return_value = "holded_123"
     
     # Mock para vision_agent
-    class MockVisionResult:
-        error = None
-        def model_dump(self):
-            return {
-                "plano_id": "test_plano_1",
-                "componentes": [
-                    {
-                        "tipo": "tablero",
-                        "material": "Madera Roble",
-                        "acabado": "Barnizado",
-                        "ancho_cm": 100.0,
-                        "largo_cm": 200.0,
-                        "cantidad": 2,
-                        "notas": ""
-                    }
-                ],
-                "confidence_score": 0.9,
-                "raw_reasoning": "Se detectó madera de roble."
-            }
-    mock_analyze_plan.return_value = MockVisionResult()
+    mock_analyze_plan.return_value = PlanoAnalizado(
+        plano_id="test_plano_1",
+        tipo_plano="partidas",
+        partidas=[Partida(familia="mueble_varios", descripcion="Aparador", material="Madera Roble",
+                          acabado="Barnizado", ancho_cm=100.0, alto_cm=200.0, cantidad=2, ref="M1")],
+        confidence_score=0.9,
+        raw_reasoning="Se detectó madera de roble.",
+    )
     
     # Mock para pricing_agent
     mock_presupuesto = Presupuesto(
@@ -148,10 +153,10 @@ async def test_workflow_end_to_end_rejection(
     app = workflow.compile(checkpointer=sqlite_checkpointer)
     
     # Configurar los mocks de manera simplificada
-    class MockVisionResult:
-        error = None
-        def model_dump(self): return {"plano_id": "test", "componentes": [], "confidence_score": 1.0, "raw_reasoning": ""}
-    mock_analyze_plan.return_value = MockVisionResult()
+    mock_analyze_plan.return_value = PlanoAnalizado(
+        plano_id="test", tipo_plano="partidas", confidence_score=1.0, raw_reasoning="",
+        partidas=[Partida(familia="rodapie", ancho_cm=520.0, alto_cm=10.0, ref="R1")],
+    )
     
     mock_presupuesto = Presupuesto(plano_id="p", lineas=[], total=0)
     mock_calculate_pricing.return_value = mock_presupuesto

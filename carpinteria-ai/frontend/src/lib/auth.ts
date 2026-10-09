@@ -14,3 +14,12 @@ export function setToken(token: string): void {
 export function clearToken(): void {
   document.cookie = `${COOKIE}=; path=/; max-age=0`;
 }
+
+/**
+ * Cabecera de autorización para adjuntar en peticiones fetch.
+ * Devuelve {} si no hay token, para poder hacer spread sin condicionales.
+ */
+export function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}

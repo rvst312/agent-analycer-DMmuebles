@@ -3,7 +3,8 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from api.auth import JWT_ALGORITHM, JWT_SECRET
-from fastapi import APIRouter, HTTPException, status
+from core.rate_limit import LOGIN_RATE_LIMIT, limiter
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -18,7 +19,8 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login")
-def login(req: LoginRequest):
+@limiter.limit(LOGIN_RATE_LIMIT)
+def login(request: Request, req: LoginRequest):
     if req.username != ADMIN_USERNAME or req.password != ADMIN_PASSWORD:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

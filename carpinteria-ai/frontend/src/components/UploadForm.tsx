@@ -7,6 +7,7 @@ import { FileText, Loader2, Upload, X, CheckCircle2, ArrowRight } from "lucide-r
 import { useRouter } from "next/navigation";
 import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { authHeaders } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -54,7 +55,7 @@ export default function UploadForm() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetch(`${BASE_URL}/holded/contacts`)
+    fetch(`${BASE_URL}/holded/contacts`, { headers: authHeaders() })
       .then(r => { if (!r.ok) throw new Error(); return r.json() as Promise<HoldedContact[]>; })
       .then(d => { setContacts(d); setContactsLoading(false); })
       .catch(() => { setContactsError("No se pudieron cargar los clientes."); setContactsLoading(false); });
@@ -91,7 +92,7 @@ export default function UploadForm() {
     setIsCreating(true);
     try {
       const res = await fetch(`${BASE_URL}/holded/contacts`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ nombre, email: createForm.email.trim() || undefined, telefono: createForm.telefono.trim() || undefined, nif: createForm.nif.trim() || undefined }),
       });
       if (!res.ok) { const err = await res.json().catch(() => ({})) as { detail?: string }; throw new Error(err.detail ?? `Error ${res.status}`); }
@@ -117,7 +118,7 @@ export default function UploadForm() {
       const contact = contacts.find(c => c.id === clientId);
       if (contact) fd.append("nombre_cliente", contact.name);
       if (notasContexto.trim()) fd.append("notas_contexto", notasContexto.trim());
-      const res = await fetch(`${BASE_URL}/estimates`, { method: "POST", body: fd });
+      const res = await fetch(`${BASE_URL}/estimates`, { method: "POST", body: fd, headers: authHeaders() });
       if (res.ok || res.status === 202) {
         const data = await res.json();
         toast.success("Plano subido. Procesando…");

@@ -1,5 +1,5 @@
+import asyncio
 import base64
-import hashlib
 import logging
 import os
 from datetime import datetime, timezone
@@ -14,7 +14,6 @@ from db.models import JobLogModel, PresupuestoModel
 from db.persistence import async_session_maker
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
-from rag.embeddings import upsert_precio
 from rag.vision_feedback import get_recent_corrections
 from services.holded_service import crear_presupuesto
 from services.notification_service import notify_n8n_error
@@ -31,6 +30,7 @@ class GraphState(TypedDict):
     archivo_path: Optional[str]                   # primer archivo (compatibilidad)
     archivos_paths: Optional[list]                # todos los archivos subidos
     archivos_content_types: Optional[list]        # content-type de cada archivo
+    archivos_nombres: Optional[list]              # nombres originales (pista de proyecto)
     cliente_id: Optional[str]
     notas_contexto: Optional[str]                 # contexto del usuario para el análisis
     plano_analizado: Optional[Dict[str, Any]]
@@ -65,6 +65,115 @@ def receive_input(state: GraphState):
     return {"status": "received"}
 
 
+_PREFIJO_REF_FAMILIA = {
+    "puerta_paso_abatible": "PA", "puerta_paso_corredera": "PC",
+    "cerramiento": "CE", "rodapie": "RD", "armario": "AR", "vestidor": "VE",
+    "mueble_bano": "MB", "mueble_varios": "MV", "balda_pared": "BP", "otro": "OT",
+}
+
+
+def _asignar_refs_unicos(partidas: list) -> None:
+    """
+    Garantiza un ref único por partida ANTES de recortes y pricing. Si dos
+    partidas de familias distintas comparten ref (p.ej. "SIN-REF"), la UI las
+    agruparía y sumaría juntas (rodapié mezclado con puertas). Aquí se separan.
+    """
+    usados: set = set()
+    for i, p in enumerate(partidas):
+        base = (p.ref or "").strip()
+        if not base or base.upper() in ("SIN-REF", "SINREF", "N/A"):
+            base = f"{_PREFIJO_REF_FAMILIA.get(p.familia or 'otro', 'PT')}{i+1:02d}"
+        ref = base
+        n = 2
+        while ref in usados:
+            ref = f"{base}-{n}"
+            n += 1
+        usados.add(ref)
+        p.ref = ref
+
+
+async def _generar_recortes_partidas(plano_id: str, partidas: list, file_paths: list) -> None:
+    """
+    Recorta del plano la zona (pagina + bbox_pct) de cada partida y guarda un PNG
+    por ref. El mapping ref→url se persiste en presupuestos.imagenes_grupo para
+    que el frontend muestre el dibujo junto a su partida.
+    """
+    import storage as _storage
+    from core.plan_images import crop_bbox_png, is_pdf, render_pdf_page
+
+    async def _get_page_png(archivo_idx: int, pagina: int):
+        """
+        Página como PNG. Primero reutiliza el PNG que ya generó el visor
+        ({plano_id}_{i}_p{n}.png); solo si no existe renderiza ESA página
+        (nunca el PDF entero otra vez). Sin caché en memoria: una página cada vez.
+        """
+        if archivo_idx >= len(file_paths):
+            return None
+        path = file_paths[archivo_idx]
+        if is_pdf(path):
+            key_visor = f"{plano_id}_{archivo_idx}_p{pagina}.png"
+            resultado = await _storage.fetch(key_visor)
+            if resultado is not None:
+                return resultado[0]
+            return await asyncio.to_thread(render_pdf_page, path, pagina)
+        # imagen suelta: una sola "página"
+        with open(path, "rb") as f:
+            return f.read()
+
+    imagenes: dict = {}
+    for p in partidas:
+        ref = p.ref or "SIN-REF"
+        if ref in imagenes or len(p.bbox_pct or []) != 4:
+            continue
+        pagina = p.pagina if p.pagina >= 1 else 1
+        page_png = await _get_page_png(p.archivo_idx, pagina)
+        if not page_png:
+            continue
+        crop = await asyncio.to_thread(crop_bbox_png, page_png, p.bbox_pct)
+        if not crop:
+            continue
+        key = f"{plano_id}_crop_{ref.replace('/', '-')}.png"
+        await _storage.save(crop, key, "image/png")
+        imagenes[ref] = _storage.get_url(key)
+
+    if not imagenes:
+        return
+    logger.info(f"vision_analysis: {len(imagenes)} recortes de partida generados")
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(PresupuestoModel).where(PresupuestoModel.plano_id == plano_id)
+            )
+            record = result.scalar_one_or_none()
+            if record:
+                record.imagenes_grupo = imagenes
+                await session.commit()
+    except Exception as e:
+        logger.error(f"vision_analysis: no se pudo guardar imagenes_grupo: {e}")
+
+
+async def _cargar_paginas_para_vision(plano_id: str, archivo_idx: int, file_path: str) -> list:
+    """
+    Carga las páginas del visor (PNG ya ORIENTADAS) y las reduce para enviarlas
+    a la visión como imágenes. Así la visión ve el plano derecho y sus bbox de
+    recorte usan exactamente el mismo eje que el visor.
+    """
+    import storage as _storage
+    from core.plan_images import MAX_PAGES, downscale_for_vision, is_pdf
+
+    if not is_pdf(file_path):
+        return []
+    paginas: list = []
+    n = 1
+    while n <= MAX_PAGES:
+        res = await _storage.fetch(f"{plano_id}_{archivo_idx}_p{n}.png")
+        if res is None:
+            break
+        paginas.append(await asyncio.to_thread(downscale_for_vision, res[0]))
+        n += 1
+    return paginas
+
+
 def _resolve_media_type(file_path: str, hint: Optional[str]) -> str:
     if hint and hint in {"image/jpeg", "image/png", "application/pdf"}:
         return hint
@@ -90,11 +199,19 @@ async def vision_analysis(state: GraphState):
 
     cliente_id = state.get("cliente_id", "unknown")
     few_shot_examples = await get_recent_corrections(cliente_id, n=3)
+
+    # Reglas aprendidas de correcciones anteriores → se inyectan en la visión
+    from agents.lecciones import cargar_lecciones
+    lecciones = await cargar_lecciones()
+    if lecciones:
+        logger.info(f"vision_analysis: {len(lecciones)} lecciones aprendidas inyectadas")
     if few_shot_examples:
         logger.info(f"vision_analysis: {len(few_shot_examples)} few-shot examples para cliente={cliente_id}")
 
     all_componentes: list = []
     all_armarios: list = []
+    all_partidas: list = []
+    proyecto = ""
     reasoning_parts: list = []
     confidence_sum = 0.0
     errors: list = []
@@ -110,14 +227,46 @@ async def vision_analysis(state: GraphState):
             errors.append(f"Archivo {idx+1}: {str(e)}")
             continue
 
-        result = analyze_plan(
+        # El nombre original del archivo suele contener el proyecto (calle+número),
+        # p.ej. "carpinteria goya - estudio.pdf" → se pasa como pista a la visión.
+        nombres = state.get("archivos_nombres") or []
+        nombre_orig = nombres[idx] if idx < len(nombres) else ""
+        notas = state.get("notas_contexto") or ""
+        if nombre_orig:
+            notas = (notas + "\n" if notas else "") + \
+                f"Nombre del archivo subido: «{nombre_orig}». Si el plano no rotula el " \
+                "proyecto (calle y número), dedúcelo de este nombre de archivo."
+
+        # Páginas del visor ya orientadas → la visión ve el plano derecho y los
+        # recortes cuadran. Si aún no existen (render falló), cae al PDF crudo.
+        page_imgs = await _cargar_paginas_para_vision(plano_id, idx, file_path)
+        if page_imgs:
+            logger.info(f"vision_analysis: archivo {idx+1} → visión con {len(page_imgs)} páginas orientadas")
+
+        # Capa de texto del PDF (planos vectoriales): cotas, rótulos y mediciones
+        # EXACTOS que la visión usa con prioridad sobre lo que lee en la imagen.
+        from core.plan_images import extract_pdf_text_pages, is_pdf
+        pdf_text: list = []
+        if is_pdf(file_path):
+            pdf_text = await asyncio.to_thread(extract_pdf_text_pages, file_path)
+            logger.info(f"vision_analysis: archivo {idx+1} → capa de texto en "
+                        f"{sum(1 for t in pdf_text if t)}/{len(pdf_text)} páginas")
+
+        # analyze_plan es síncrono y hace varias llamadas bloqueantes a Claude
+        # (decenas de segundos con PDFs). Lo ejecutamos en un hilo para no
+        # bloquear el event loop de FastAPI (congelaría el resto de requests/SSE).
+        result = await asyncio.to_thread(
+            analyze_plan,
             image_base64=image_base64,
             media_type=media_type,
             plano_id=plano_id,
             few_shot_examples=few_shot_examples,
             file_index=idx + 1,
             file_total=len(file_paths),
-            notes=state.get("notas_contexto"),
+            notes=notas or None,
+            page_images=page_imgs or None,
+            lecciones=lecciones or None,
+            pdf_text_pages=pdf_text or None,
         )
 
         if result.error:
@@ -127,7 +276,14 @@ async def vision_analysis(state: GraphState):
 
         tipo_plano = result.tipo_plano
 
-        if result.tipo_plano == "armario" and result.armarios:
+        if getattr(result, "partidas", None):
+            logger.info(f"vision_analysis: archivo {idx+1}/{len(file_paths)} → {len(result.partidas)} partidas detectadas")
+            for p in result.partidas:
+                p.archivo_idx = idx  # de qué archivo subido viene (para el recorte)
+            all_partidas.extend(result.partidas)
+        if not proyecto and getattr(result, "proyecto", ""):
+            proyecto = result.proyecto
+        elif result.tipo_plano == "armario" and result.armarios:
             logger.info(f"vision_analysis: archivo {idx+1}/{len(file_paths)} → {len(result.armarios)} armarios detectados")
             all_armarios.extend(result.armarios)
         else:
@@ -138,18 +294,50 @@ async def vision_analysis(state: GraphState):
         confidence_sum += result.confidence_score
         processed += 1
 
-    if not all_componentes and not all_armarios:
-        error_msg = "; ".join(errors) if errors else "No se detectaron componentes en ninguna imagen"
+    if not all_componentes and not all_armarios and not all_partidas:
+        error_msg = "; ".join(errors) if errors else "No se detectaron partidas en ninguna imagen"
         return {"status": "error", "error": error_msg, "plano_id": plano_id}
 
     avg_confidence = confidence_sum / max(processed, 1)
     merged_reasoning = " | ".join(reasoning_parts)
 
+    # Refs únicos por partida (evita que la UI mezcle familias en un grupo)
+    if all_partidas:
+        _asignar_refs_unicos(all_partidas)
+
+    # Persistir en BD el proyecto (calle + número) y las PARTIDAS detectadas:
+    # deben sobrevivir al checkpoint (el título del presupuesto y la función
+    # de "corregir con IA" dependen de ellos).
+    if proyecto or all_partidas:
+        try:
+            async with async_session_maker() as session:
+                result = await session.execute(
+                    select(PresupuestoModel).where(PresupuestoModel.plano_id == plano_id)
+                )
+                record = result.scalar_one_or_none()
+                if record:
+                    if proyecto:
+                        record.proyecto = proyecto
+                    if all_partidas:
+                        record.partidas = [p.model_dump() for p in all_partidas]
+                    await session.commit()
+        except Exception as e:
+            logger.error(f"vision_analysis: no se pudo persistir proyecto/partidas: {e}")
+
+    # Recortes del plano por partida (best-effort: nunca bloquea el análisis)
+    if all_partidas:
+        try:
+            await _generar_recortes_partidas(plano_id, all_partidas, file_paths)
+        except Exception as e:
+            logger.error(f"vision_analysis: fallo generando recortes: {e}")
+
     import json as _json
     from api.schemas.estimate import PlanoAnalizado as _PA
     merged = _PA(
         plano_id=plano_id,
-        tipo_plano=tipo_plano,
+        tipo_plano="partidas" if all_partidas else tipo_plano,
+        proyecto=proyecto,
+        partidas=all_partidas,
         componentes=all_componentes,
         armarios=all_armarios if all_armarios else None,
         confidence_score=round(avg_confidence, 3),
@@ -179,12 +367,20 @@ async def rag_pricing(state: GraphState):
         cliente_id = state.get("cliente_id", "unknown")
         thread_id = state.get("thread_id")
 
+        # El pricing bloquea CPU (embeddings de Chroma) → a un hilo. El callback
+        # re-entra al event loop: publish() usa asyncio.Queue (no thread-safe).
+        loop = asyncio.get_running_loop()
+
         def on_line_added(linea_dict: dict) -> None:
             if thread_id:
                 from core.events import publish
-                publish(thread_id, {"type": "line_added", "linea": linea_dict})
+                loop.call_soon_threadsafe(
+                    publish, thread_id, {"type": "line_added", "linea": linea_dict}
+                )
 
-        presupuesto = calculate_pricing(plano, cliente_id, on_line_added=on_line_added)
+        presupuesto = await asyncio.to_thread(
+            calculate_pricing, plano, cliente_id, on_line_added=on_line_added
+        )
 
         return {
             "status": "priced",
@@ -261,7 +457,9 @@ async def send_to_holded(state: GraphState):
         cliente_id = state.get("cliente_id", "unknown")
         contact_id = cliente_id
 
-        holded_id = crear_presupuesto(contact_id, presupuesto)
+        # crear_presupuesto usa requests (bloqueante, timeout 10s); a un hilo
+        # para no bloquear el event loop.
+        holded_id = await asyncio.to_thread(crear_presupuesto, contact_id, presupuesto)
         if not holded_id:
             return {"status": "error", "error": "Falló la creación del presupuesto en Holded"}
 
@@ -275,6 +473,14 @@ async def send_to_holded(state: GraphState):
                 if presupuesto_db:
                     presupuesto_db.holded_estimate_id = holded_id
                     presupuesto_db.status = "approved"
+                    # Sincronizar la BD con LO QUE SE ENVIÓ a Holded (el humano
+                    # pudo ajustar líneas/totales en la aprobación).
+                    presupuesto_db.lineas = [l.model_dump() for l in presupuesto.lineas]
+                    presupuesto_db.subtotal = presupuesto.subtotal
+                    presupuesto_db.iva = presupuesto.iva
+                    presupuesto_db.total = presupuesto.total
+                    presupuesto_db.titulos_grupo = presupuesto.titulos_grupo or {}
+                    presupuesto_db.descripciones_grupo = presupuesto.descripciones_grupo or {}
                     presupuesto_db.updated_at = datetime.now(timezone.utc)
                     await session.commit()
 
@@ -284,62 +490,14 @@ async def send_to_holded(state: GraphState):
         return {"status": "error", "error": f"Error enviando a Holded: {str(e)}"}
 
 
-async def learn_prices(state: GraphState):
-    """Upsert confirmed line prices back into ChromaDB so future estimates improve."""
-    logger.info("Node: learn_prices")
-
-    consolidado_dict = state.get("presupuesto_consolidado")
-    plano_dict = state.get("plano_analizado")
-
-    if not consolidado_dict or not plano_dict:
-        logger.warning("learn_prices: missing state, skipping learning")
-        return {}
-
-    try:
-        consolidado = PresupuestoConsolidado(**consolidado_dict)
-        plano = PlanoAnalizado(**plano_dict)
-    except Exception as e:
-        logger.error(f"learn_prices: failed to parse state: {e}")
-        return {}
-
-    learned = 0
-    for idx, linea in enumerate(consolidado.lineas):
-        if linea.precio_pendiente or linea.precio_unitario <= 0:
-            continue
-
-        if idx >= len(plano.componentes):
-            continue
-
-        comp = plano.componentes[idx]
-        material = comp.material.strip()
-        acabado = comp.acabado.strip()
-        tipo = comp.tipo.value
-
-        query_text = f"{material} {acabado} {tipo}"
-        doc_id = "learned_" + hashlib.md5(query_text.lower().encode()).hexdigest()[:16]
-
-        metadatos = {
-            "material": material,
-            "acabado": acabado,
-            "tipo": tipo,
-            "cliente": "general",
-            "precio_unitario": linea.precio_unitario,
-            "unidad": "m2",
-            "version": "learned",
-            "categoria": tipo,
-            "source": "human_approved",
-            "activo": True,
-        }
-
-        try:
-            upsert_precio(doc_id, query_text, metadatos)
-            learned += 1
-            logger.info(f"learn_prices: '{query_text}' → {linea.precio_unitario:.2f} €/m2")
-        except Exception as e:
-            logger.error(f"learn_prices: failed to upsert '{query_text}': {e}")
-
-    logger.info(f"learn_prices: {learned}/{len(consolidado.lineas)} prices learned")
-    return {}
+# NOTA: se eliminó el nodo `learn_prices`. Aprendía automáticamente al aprobar,
+# pero solo procesaba líneas NO pendientes (precio ya existente en la KB) y
+# reescribía `linea.precio_unitario` —que en el camino genérico es €/pieza
+# (area·precio_kb + mano de obra)— etiquetándolo como €/m². Eso inflaba el
+# precio en cada ciclo (bucle de sobreprecio) y desalineaba línea↔componente por
+# índice si el humano reordenaba. El aprendizaje real y correcto lo cubre el
+# endpoint /estimates/{id}/learn-pricing (feedback humano → apply_price_feedback),
+# que actualiza el precio del item existente en vez de crear entradas corruptas.
 
 
 async def notify_team(state: GraphState):
@@ -401,7 +559,6 @@ workflow.add_node("rag_pricing", rag_pricing)
 workflow.add_node("consolidate", consolidate)
 workflow.add_node("human_approval", human_approval)
 workflow.add_node("send_to_holded", send_to_holded)
-workflow.add_node("learn_prices", learn_prices)
 workflow.add_node("notify_team", notify_team)
 workflow.add_node("handle_error", handle_error)
 
@@ -457,10 +614,8 @@ workflow.add_conditional_edges(
 workflow.add_conditional_edges(
     "send_to_holded",
     check_error,
-    {"error": "handle_error", "continue": "learn_prices"}
+    {"error": "handle_error", "continue": "notify_team"}
 )
-# learn_prices is best-effort: failures are logged but never block the workflow
-workflow.add_edge("learn_prices", "notify_team")
 workflow.add_conditional_edges(
     "notify_team",
     check_error,

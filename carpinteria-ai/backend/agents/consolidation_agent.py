@@ -34,7 +34,10 @@ def calcular_presupuesto_consolidado(presupuesto: Presupuesto, cliente_id: str) 
         iva=iva,
         total=total,
         lineas_pendientes=lineas_pendientes,
-        status="pending_review"
+        status="pending_review",
+        titulos_grupo=presupuesto.titulos_grupo,
+        descripciones_grupo=presupuesto.descripciones_grupo,
+        familias_faltantes=presupuesto.familias_faltantes,
     )
 
 
@@ -59,6 +62,9 @@ async def guardar_presupuesto_en_db(consolidado: PresupuestoConsolidado) -> Pres
             record.total = consolidado.total
             record.lineas = lineas_json
             record.lineas_pendientes = pendientes_json
+            record.titulos_grupo = consolidado.titulos_grupo or {}
+            record.descripciones_grupo = consolidado.descripciones_grupo or {}
+            record.familias_faltantes = consolidado.familias_faltantes or []
             record.status = "pending_review"
             record.updated_at = now
             await session.commit()
@@ -75,6 +81,9 @@ async def guardar_presupuesto_en_db(consolidado: PresupuestoConsolidado) -> Pres
                 total=consolidado.total,
                 lineas=lineas_json,
                 lineas_pendientes=pendientes_json,
+                titulos_grupo=consolidado.titulos_grupo or {},
+                descripciones_grupo=consolidado.descripciones_grupo or {},
+                familias_faltantes=consolidado.familias_faltantes or [],
                 status="pending_review",
             )
             session.add(nuevo)

@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { Loader2, FileText, FileImage, Clock, CheckCircle, ArrowRight, AlertCircle } from "lucide-react";
 import { EstimateSummary } from "@/types/estimate";
+import { authHeaders } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -25,7 +26,7 @@ function RecentEstimates() {
   const [loading, setLoading]     = useState(true);
 
   useEffect(() => {
-    fetch(`${BASE_URL}/estimates`)
+    fetch(`${BASE_URL}/estimates`, { headers: authHeaders() })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setEstimates((d.estimates ?? []).slice(0, 6)); })
       .catch(() => {})

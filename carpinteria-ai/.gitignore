@@ -92,3 +92,6 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 postgres_data/
+
+# Planos de clientes (datos confidenciales): nunca al repositorio
+backend/uploads/

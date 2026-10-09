@@ -1,0 +1,297 @@
+{
+  "_ayuda": "Tarifa editable. Los tramos son listas [limite_mm, porcentaje]; el primer tramo cuyo limite >= medida gana. Un porcentaje 0.20 = +20%, -0.35 = -35%. 'null' en un tramo = 'consultar' (precio pendiente). Para cambiar un precio, edita el numero y guarda.",
+  "modulo": {
+    "base": 700,
+    "alto_mm": [
+      [
+        1200,
+        -0.35
+      ],
+      [
+        2400,
+        0
+      ],
+      [
+        3050,
+        0.2
+      ]
+    ],
+    "ancho_mm": [
+      [
+        600,
+        -0.35
+      ],
+      [
+        1200,
+        0
+      ]
+    ],
+    "fondo_mm": [
+      [
+        300,
+        -0.35
+      ],
+      [
+        600,
+        0
+      ]
+    ],
+    "descuento_dimension_max": -0.5,
+    "acabado": {
+      "melamina stock": 0,
+      "melamina": 0,
+      "melamina especial": 0.5,
+      "laca blanca": 1
+    }
+  },
+  "puerta_armario": {
+    "base": 160,
+    "alto_mm": [
+      [
+        1200,
+        -0.35
+      ],
+      [
+        2400,
+        0
+      ],
+      [
+        2850,
+        0.1
+      ],
+      [
+        3050,
+        0.2
+      ]
+    ],
+    "ancho_mm": [
+      [
+        400,
+        -0.15
+      ],
+      [
+        600,
+        0
+      ]
+    ],
+    "corredera_ancho_mm": [
+      [
+        600,
+        0.7
+      ],
+      [
+        1200,
+        1
+      ]
+    ],
+    "costado_visto": 120,
+    "acabado": {
+      "melamina stock": -0.25,
+      "melamina": -0.25,
+      "laca blanca": 0,
+      "blanca": 0,
+      "blanco": 0,
+      "laca color claro": 0.05,
+      "color claro": 0.05,
+      "laca color oscuro": 0.1,
+      "color oscuro": 0.1,
+      "chapa roble barnizada": 0.1,
+      "roble barnizado": 0.1,
+      "chapa roble teñida": 0.2,
+      "roble teñido": 0.2
+    }
+  },
+  "interiores": {
+    "cajon_cajonera_mm": [
+      [
+        160,
+        75
+      ],
+      [
+        200,
+        85
+      ],
+      [
+        320,
+        95
+      ]
+    ],
+    "cajon_suelto_mm": [
+      [
+        160,
+        100
+      ],
+      [
+        200,
+        120
+      ],
+      [
+        320,
+        120
+      ]
+    ],
+    "balda": 20,
+    "barra_perchero": 30,
+    "sensor": 25,
+    "tira_led_ml": 45,
+    "tira_led_minimo": 250
+  },
+  "balda_pared": {
+    "largo_tramos_mm": [
+      600,
+      1200,
+      1800,
+      2400
+    ],
+    "base": {
+      "300": {
+        "600": 85,
+        "1200": 110,
+        "1800": 150,
+        "2400": 225
+      },
+      "600": {
+        "600": 110,
+        "1200": 150,
+        "1800": 225,
+        "2400": 300
+      }
+    },
+    "material": {
+      "laca blanca": 0,
+      "blanca": 0,
+      "laca color claro": 0.05,
+      "color claro": 0.05,
+      "laca color oscuro": 0.1,
+      "color oscuro": 0.1,
+      "melamina stock": -0.2,
+      "melamina": -0.2,
+      "chapa roble barnizada": 0.1,
+      "roble barnizado": 0.1,
+      "chapa roble teñida": 0.2,
+      "roble teñido": 0.2
+    },
+    "grosor_mm": [
+      [
+        30,
+        0
+      ],
+      [
+        40,
+        0.2
+      ],
+      [
+        100,
+        0.5
+      ]
+    ]
+  },
+  "puerta_paso_normal": {
+    "base": 370,
+    "alto_mm": [
+      [
+        2030,
+        0
+      ],
+      [
+        2100,
+        0.1
+      ],
+      [
+        2400,
+        0.3
+      ],
+      [
+        2900,
+        0.7
+      ]
+    ],
+    "ancho_mm": [
+      [
+        825,
+        0
+      ],
+      [
+        925,
+        0.1
+      ]
+    ],
+    "grosor_mm": [
+      [
+        35,
+        -0.05
+      ],
+      [
+        40,
+        0
+      ],
+      [
+        45,
+        0.1
+      ]
+    ],
+    "corredera": 0.5,
+    "acabado": {
+      "laca blanca": 0,
+      "blanca": 0,
+      "laca color claro": 0.05,
+      "color claro": 0.05,
+      "laca color oscuro": 0.15,
+      "color oscuro": 0.15,
+      "roble": 0.2
+    },
+    "extras": {
+      "bisagras_ocultas": 150,
+      "resbalon_magnetico": 30,
+      "plinto_por_puerta": 80
+    }
+  },
+  "puerta_paso_rasomuro": {
+    "base": 720,
+    "alto_mm": [
+      [
+        2030,
+        0
+      ],
+      [
+        2100,
+        0.1
+      ],
+      [
+        2400,
+        0.15
+      ],
+      [
+        2900,
+        0.3
+      ]
+    ],
+    "ancho_mm": [
+      [
+        825,
+        0
+      ],
+      [
+        925,
+        0.1
+      ]
+    ],
+    "grosor_mm": null,
+    "corredera": null,
+    "acabado": {
+      "laca blanca": 0,
+      "blanca": 0,
+      "laca color claro": 0.05,
+      "color claro": 0.05,
+      "laca color oscuro": 0.15,
+      "color oscuro": 0.15
+    },
+    "extras": {
+      "autocierre_sin_manivela": 150
+    }
+  },
+  "vestidor": {
+    "_nota": "Un vestidor es un armario SIN puertas. Se calcula como el armario (cuerpo + interior) y se añade el remate por metro lineal.",
+    "remate_ml": 45
+  }
+}

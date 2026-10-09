@@ -9,10 +9,23 @@ import KbSearchModal from "@/components/KbSearchModal";
 import { EstimateDetail, LineaPresupuesto, PlanoAnalizado, PriceCorrection, SSEEvent } from "@/types/estimate";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { ArrowLeft, BrainCircuit, CheckCircle2, Circle, Loader2, Plus, Save } from "lucide-react";
-import { getToken } from "@/lib/auth";
+import { AlertCircle, ArrowLeft, BrainCircuit, CheckCircle2, Circle, Loader2, Plus, RefreshCw, Save, Wand2 } from "lucide-react";
+import { getToken, authHeaders } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+const FAMILIA_LABELS: Record<string, string> = {
+  puerta_paso_abatible: "Puertas de paso abatibles",
+  puerta_paso_corredera: "Puertas de paso correderas",
+  cerramiento: "Cerramientos",
+  rodapie: "Rodapiés",
+  armario: "Armarios",
+  vestidor: "Vestidores",
+  mueble_bano: "Muebles de baño",
+  mueble_varios: "Muebles varios",
+  balda_pared: "Baldas a pared",
+  otro: "Otros",
+};
 const MAX_POLL_ATTEMPTS = 30; // ~60 s at 2 s interval before giving up
 
 const NODES_ORDER = [
@@ -75,6 +88,15 @@ export default function EstimatePage() {
   const [total, setTotal] = useState(0);
   const [groupDescriptions, setGroupDescriptions] = useState<Record<string, string>>({});
   const [tituloProyecto, setTituloProyecto] = useState('');
+  // Título + descripción de partida generados por el backend (por ref).
+  const [titulosGrupo, setTitulosGrupo] = useState<Record<string, string>>({});
+  const [descripcionesGrupo, setDescripcionesGrupo] = useState<Record<string, string>>({});
+  const [familiasFaltantes, setFamiliasFaltantes] = useState<string[]>([]);
+  const [imagenesGrupo, setImagenesGrupo] = useState<Record<string, string>>({});
+  const [groupDiscountsMap, setGroupDiscountsMap] = useState<Record<string, number>>({});
+  // Corrección con IA (caja global)
+  const [correccionGlobal, setCorreccionGlobal] = useState("");
+  const [corrigiendo, setCorrigiendo] = useState<"recalc" | "reanalisis" | null>(null);
 
   const [originalLineas, setOriginalLineas] = useState<LineaPresupuesto[]>([]);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
@@ -134,7 +156,7 @@ export default function EstimatePage() {
     try {
       const res = await fetch(`${BASE_URL}/estimates/${estimateId}/lineas`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ lineas, subtotal, iva, total }),
       });
       if (!res.ok) throw new Error(`Error ${res.status}`);
@@ -153,7 +175,7 @@ export default function EstimatePage() {
     try {
       const res = await fetch(`${BASE_URL}/estimates/${estimateId}/learn-pricing`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ correcciones: corrections }),
       });
       if (!res.ok) throw new Error(`Error ${res.status}`);
@@ -168,6 +190,47 @@ export default function EstimatePage() {
     } finally {
       setIsSavingFeedback(false);
     }
+  };
+
+  // Corrección con IA: edita las partidas detectadas y recalcula. Con `ref`
+  // solo toca esa partida; con `reanalizar` vuelve a mirar el plano completo.
+  const aplicarCorreccion = async (instruccion: string, ref?: string, reanalizar?: boolean) => {
+    const res = await fetch(`${BASE_URL}/estimates/${estimateId}/corregir`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ instruccion, ref, reanalizar }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({})) as { detail?: string };
+      throw new Error(err.detail ?? `Error ${res.status}`);
+    }
+    const data = await res.json();
+
+    if (ref && data.lineas_afectadas) {
+      // Sustituir solo las líneas de los refs afectados, conservando las
+      // ediciones manuales del resto de grupos.
+      const afectados = new Set<string>(data.refs_afectados ?? [ref]);
+      setLineas(prev => {
+        const idx = prev.findIndex(l => afectados.has(l.ref ?? ""));
+        const keep = prev.filter(l => !afectados.has(l.ref ?? ""));
+        const nuevas = formatLineas(data.lineas_afectadas);
+        const at = idx === -1 ? keep.length : Math.min(idx, keep.length);
+        const next = [...keep.slice(0, at), ...nuevas, ...keep.slice(at)];
+        recalc(next);
+        return next;
+      });
+    } else {
+      const ls = formatLineas(data.lineas ?? []);
+      setLineas(ls);
+      recalc(ls);
+      setOriginalLineas(ls.map(l => ({ ...l })));
+    }
+    if (data.titulos_grupo) setTitulosGrupo(data.titulos_grupo);
+    if (data.descripciones_grupo) setDescripcionesGrupo(data.descripciones_grupo);
+    setFamiliasFaltantes(data.familias_faltantes ?? []);
+    if (data.imagenes_grupo && Object.keys(data.imagenes_grupo).length) setImagenesGrupo(data.imagenes_grupo);
+    if (data.proyecto) setEstimate(prev => (prev ? { ...prev, proyecto: data.proyecto } : prev));
+    toast.success(ref ? `Partida ${ref} recalculada.` : "Presupuesto recalculado con la corrección.");
   };
 
   const stopPoll = useCallback(() => {
@@ -191,7 +254,7 @@ export default function EstimatePage() {
     }
 
     try {
-      const res = await fetch(`${BASE_URL}/estimates/${estimateId}`);
+      const res = await fetch(`${BASE_URL}/estimates/${estimateId}`, { headers: authHeaders() });
       if (res.status === 404) {
         // Estimate not in DB yet — keep polling briefly
         setLoading(false);
@@ -204,14 +267,18 @@ export default function EstimatePage() {
       setLoading(false);
 
       if (data.image_urls?.length) setImageUrls(u => u.length >= (data.image_urls?.length ?? 0) ? u : (data.image_urls ?? u));
+      if (data.imagenes_grupo && Object.keys(data.imagenes_grupo).length) setImagenesGrupo(data.imagenes_grupo);
 
-      if (data.plano_analizado?.componentes?.length) {
+      if (data.plano_analizado?.componentes?.length || data.plano_analizado?.partidas?.length) {
         setPlanoAnalizado(data.plano_analizado);
       }
 
       if (data.presupuesto_consolidado) {
         const ls = formatLineas(data.presupuesto_consolidado.lineas || []);
         setLineasWithOriginal(ls);
+        if (data.presupuesto_consolidado.titulos_grupo) setTitulosGrupo(data.presupuesto_consolidado.titulos_grupo);
+        if (data.presupuesto_consolidado.descripciones_grupo) setDescripcionesGrupo(data.presupuesto_consolidado.descripciones_grupo);
+        if (data.presupuesto_consolidado.familias_faltantes) setFamiliasFaltantes(data.presupuesto_consolidado.familias_faltantes);
       }
 
       if (TERMINAL.has(data.status)) {
@@ -248,6 +315,12 @@ export default function EstimatePage() {
         return;
       }
 
+      if (raw.type === "viewer_ready") {
+        // Las páginas del PDF ya están renderizadas como imágenes
+        if (raw.image_urls?.length) setImageUrls(raw.image_urls);
+        return;
+      }
+
       if (raw.type === "line_added") {
         setLoading(false);
         setLineas(prev => { 
@@ -264,8 +337,11 @@ export default function EstimatePage() {
         setDoneNodes(prev => { const s = new Set(prev); s.add(node); return s; });
         setCurrentNode(null);
 
-        if (raw.plano_analizado && (raw.plano_analizado as PlanoAnalizado).componentes?.length) {
-          setPlanoAnalizado(raw.plano_analizado as PlanoAnalizado);
+        {
+          const pa = raw.plano_analizado as PlanoAnalizado | undefined;
+          if (pa && (pa.componentes?.length || pa.partidas?.length)) {
+            setPlanoAnalizado(pa);
+          }
         }
 
         if (presupuesto_calculado?.lineas) {
@@ -275,6 +351,9 @@ export default function EstimatePage() {
         if (presupuesto_consolidado) {
           const ls = formatLineas(presupuesto_consolidado.lineas || []);
           setLineasWithOriginal(ls);
+          if (presupuesto_consolidado.titulos_grupo) setTitulosGrupo(presupuesto_consolidado.titulos_grupo);
+          if (presupuesto_consolidado.descripciones_grupo) setDescripcionesGrupo(presupuesto_consolidado.descripciones_grupo);
+          if (presupuesto_consolidado.familias_faltantes) setFamiliasFaltantes(presupuesto_consolidado.familias_faltantes);
         }
         if (status && TERMINAL.has(status)) setIsProcessing(false);
 
@@ -307,7 +386,11 @@ export default function EstimatePage() {
       }
     };
 
-    const es = new EventSource(`${BASE_URL}/estimates/${estimateId}/stream`);
+    // EventSource no puede enviar cabeceras, así que el JWT va como query param
+    // (el backend acepta ?token= en el router de /estimates para el SSE).
+    const sseToken = getToken();
+    const streamUrl = `${BASE_URL}/estimates/${estimateId}/stream${sseToken ? `?token=${encodeURIComponent(sseToken)}` : ""}`;
+    const es = new EventSource(streamUrl);
     esRef.current = es;
 
     es.onmessage = (e) => {
@@ -336,6 +419,11 @@ export default function EstimatePage() {
         toast.error("Por favor, ingresa un motivo para el rechazo.");
         return;
       }
+      if (action === "approve" && !tituloProyecto.trim()) {
+        toast.error("Falta el título del proyecto (calle y número). Rellénalo antes de enviar a Holded.");
+        setShowApproveModal(false);
+        return;
+      }
       setIsSubmitting(true);
 
       const access_token = getToken();
@@ -347,7 +435,7 @@ export default function EstimatePage() {
         body: JSON.stringify({
           thread_id: estimateId,
           action,
-          ajustes: { lineas, subtotal, iva, total, descripciones_grupo: groupDescriptions, titulo_proyecto: tituloProyecto },
+          ajustes: { lineas, subtotal, iva, total, descripciones_grupo: groupDescriptions, descuentos_grupo: groupDiscountsMap, titulo_proyecto: tituloProyecto },
           motivo: action === "reject" ? motivoRechazo : undefined,
         }),
       });
@@ -439,37 +527,114 @@ export default function EstimatePage() {
                   <span className="text-xs text-gray-400">{Math.round(planoAnalizado.confidence_score * 100)}% conf.</span>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-1.5 mb-3">
-                {Object.entries(
-                  planoAnalizado.componentes.reduce((acc: Record<string, number>, c) => {
-                    const key = c.tipo || "otro";
-                    acc[key] = (acc[key] || 0) + (c.cantidad || 1);
-                    return acc;
-                  }, {})
-                ).map(([tipo, count]) => (
-                  <div key={tipo} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-1.5">
-                    <span className="text-xs text-gray-600 capitalize">{tipo.replace(/_/g, " ")}</span>
-                    <span className="text-xs font-bold text-gray-900">{count as number}</span>
-                  </div>
-                ))}
-              </div>
               {(() => {
-                const mats = Array.from(new Set(planoAnalizado.componentes.map(c => c.material).filter(Boolean))).slice(0, 5);
-                return mats.length > 0 ? (
-                  <div className="flex flex-wrap gap-1">
-                    {mats.map(m => (
-                      <span key={m} className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">{m}</span>
-                    ))}
-                  </div>
-                ) : null;
+                // Flujo nuevo: partidas por familia. Flujo legacy: componentes.
+                const parts = planoAnalizado.partidas ?? [];
+                const usaPartidas = parts.length > 0;
+                const conteos: Record<string, number> = usaPartidas
+                  ? parts.reduce((acc: Record<string, number>, p) => {
+                      const key = FAMILIA_LABELS[p.familia ?? "otro"] ?? (p.familia ?? "otro");
+                      acc[key] = (acc[key] || 0) + 1;
+                      return acc;
+                    }, {})
+                  : planoAnalizado.componentes.reduce((acc: Record<string, number>, c) => {
+                      const key = c.tipo || "otro";
+                      acc[key] = (acc[key] || 0) + (c.cantidad || 1);
+                      return acc;
+                    }, {});
+                const mats = Array.from(new Set(
+                  (usaPartidas ? parts.map(p => p.material) : planoAnalizado.componentes.map(c => c.material))
+                    .filter(Boolean) as string[]
+                )).slice(0, 5);
+                const nPiezas = usaPartidas ? parts.length : planoAnalizado.componentes.length;
+                return (
+                  <>
+                    <div className="grid grid-cols-2 gap-1.5 mb-3">
+                      {Object.entries(conteos).map(([tipo, count]) => (
+                        <div key={tipo} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-1.5">
+                          <span className="text-xs text-gray-600 capitalize">{tipo.replace(/_/g, " ")}</span>
+                          <span className="text-xs font-bold text-gray-900">{count}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {mats.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {mats.map(m => (
+                          <span key={m} className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">{m}</span>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-xs text-gray-400 mt-2">
+                      {nPiezas} {usaPartidas ? "partidas detectadas" : "piezas detectadas"}
+                    </p>
+                  </>
+                );
               })()}
-              <p className="text-xs text-gray-400 mt-2">{planoAnalizado.componentes.length} piezas detectadas</p>
             </div>
           )}
         </div>
 
         {/* Right: lines + actions */}
         <div className="flex flex-col gap-4">
+          {/* Corrección con IA (global) */}
+          {canApprove && lineas.length > 0 && (
+            <div className="bg-white border border-violet-200 rounded-lg p-3">
+              <p className="text-xs font-semibold text-violet-700 mb-1.5 flex items-center gap-1.5">
+                <Wand2 className="w-3.5 h-3.5" /> ¿Algo mal en el presupuesto? Descríbelo y recalculo
+              </p>
+              <textarea
+                className="w-full text-xs text-gray-700 bg-white border border-violet-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-violet-400 resize-none"
+                rows={2}
+                placeholder={'Ej: "Las puertas del armario A07 son abatibles de 60cm, melamina blanca. El rodapié es de 10cm y son 35 metros."'}
+                value={correccionGlobal}
+                onChange={e => setCorreccionGlobal(e.target.value)}
+                disabled={corrigiendo !== null}
+              />
+              <div className="flex items-center justify-end gap-2 mt-1.5">
+                <button type="button"
+                  disabled={corrigiendo !== null}
+                  title="Vuelve a analizar el plano completo con tu corrección como contexto (~1-2 min)"
+                  onClick={async () => {
+                    if (!confirm("Se volverá a analizar el plano completo (~1-2 min) y se regenerará TODO el presupuesto (se perderán las ediciones manuales). ¿Continuar?")) return;
+                    setCorrigiendo("reanalisis");
+                    try { await aplicarCorreccion(correccionGlobal.trim(), undefined, true); setCorreccionGlobal(""); }
+                    catch (e) { toast.error(e instanceof Error ? e.message : "Error en el re-análisis"); }
+                    finally { setCorrigiendo(null); }
+                  }}
+                  className="text-xs text-violet-700 border border-violet-300 hover:bg-violet-50 px-3 py-1.5 rounded-md disabled:opacity-40 flex items-center gap-1">
+                  {corrigiendo === "reanalisis" ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  {corrigiendo === "reanalisis" ? "Re-analizando…" : "Volver a analizar plano"}
+                </button>
+                <button type="button"
+                  disabled={corrigiendo !== null || !correccionGlobal.trim()}
+                  onClick={async () => {
+                    if (!confirm("Se recalcularán las partidas afectadas por la corrección (se perderán ediciones manuales en ellas). ¿Continuar?")) return;
+                    setCorrigiendo("recalc");
+                    try { await aplicarCorreccion(correccionGlobal.trim()); setCorreccionGlobal(""); }
+                    catch (e) { toast.error(e instanceof Error ? e.message : "Error aplicando la corrección"); }
+                    finally { setCorrigiendo(null); }
+                  }}
+                  className="text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-md disabled:opacity-40 flex items-center gap-1">
+                  {corrigiendo === "recalc" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                  {corrigiendo === "recalc" ? "Recalculando…" : "Recalcular precios"}
+                </button>
+              </div>
+            </div>
+          )}
+          {familiasFaltantes.length > 0 && (
+            <div className="bg-amber-50 border border-amber-300 rounded-lg p-3">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                <div className="text-xs text-amber-800">
+                  <span className="font-semibold">Faltan familias en la Tabla de precios.</span>{" "}
+                  Estas partidas quedan pendientes de precio (créalas en la tarifa):{" "}
+                  <span className="font-medium">
+                    {familiasFaltantes.map(f => FAMILIA_LABELS[f] ?? f).join(", ")}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
             <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -512,12 +677,21 @@ export default function EstimatePage() {
                 onSavePriceFeedback={handleSavePriceFeedback}
                 isSavingFeedback={isSavingFeedback}
                 onDiscountsChange={handleDiscountsChange}
+                onGroupDiscountsChange={setGroupDiscountsMap}
                 clienteId={estimate?.cliente_id}
+                titulosGrupo={titulosGrupo}
+                descripcionesGrupo={descripcionesGrupo}
+                imagenesGrupo={imagenesGrupo}
+                tituloProyectoInicial={estimate?.plano_analizado?.proyecto ?? estimate?.proyecto ?? ""}
+                onCorregirPartida={async (ref, instruccion) => {
+                  try { await aplicarCorreccion(instruccion, ref); }
+                  catch (e) { toast.error(e instanceof Error ? e.message : "Error corrigiendo la partida"); }
+                }}
               />
             )}
           </div>
 
-          {planoAnalizado && (
+          {planoAnalizado && planoAnalizado.componentes.length > 0 && (
             <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center justify-between">
               <p className="text-xs text-gray-500">
                 <span className="font-medium text-gray-700">{planoAnalizado.componentes.length} componentes</span>

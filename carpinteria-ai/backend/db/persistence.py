@@ -55,6 +55,14 @@ def _apply_migrations(conn):
         "updated_at":      f"ALTER TABLE presupuestos ADD COLUMN updated_at {ts_type}",
         "archivos_keys":   f"ALTER TABLE presupuestos ADD COLUMN archivos_keys {json_type}",
         "nombre_cliente":  "ALTER TABLE presupuestos ADD COLUMN nombre_cliente TEXT",
+        "titulos_grupo":       f"ALTER TABLE presupuestos ADD COLUMN titulos_grupo {json_type}",
+        "descripciones_grupo": f"ALTER TABLE presupuestos ADD COLUMN descripciones_grupo {json_type}",
+        "imagenes_grupo":      f"ALTER TABLE presupuestos ADD COLUMN imagenes_grupo {json_type}",
+        "proyecto":            "ALTER TABLE presupuestos ADD COLUMN proyecto TEXT",
+        "familias_faltantes":  f"ALTER TABLE presupuestos ADD COLUMN familias_faltantes {json_type}",
+        "partidas":            f"ALTER TABLE presupuestos ADD COLUMN partidas {json_type}",
+        "archivos_origen":     f"ALTER TABLE presupuestos ADD COLUMN archivos_origen {json_type}",
+        "correcciones":        f"ALTER TABLE presupuestos ADD COLUMN correcciones {json_type}",
     }
     for col, sql in new_cols.items():
         if col not in existing:
@@ -73,6 +81,29 @@ def _apply_migrations(conn):
                 logger.warning(f"Migration skipped for {col}: {e}")
 
 
+def _apply_indexes(conn):
+    """Índices para las consultas reales (idempotente en SQLite y Postgres).
+    Se ejecuta DESPUÉS de create_all para que las tablas ya existan."""
+    from sqlalchemy import text
+    indices = [
+        "CREATE INDEX IF NOT EXISTS ix_presupuestos_created_at ON presupuestos (created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_component_feedback_cliente_id ON component_feedback (cliente_id)",
+        "CREATE INDEX IF NOT EXISTS ix_lecciones_activo ON lecciones (activo)",
+        "CREATE INDEX IF NOT EXISTS ix_lecciones_created_at ON lecciones (created_at)",
+    ]
+    for sql in indices:
+        try:
+            conn.execute(text("SAVEPOINT _idx"))
+            conn.execute(text(sql))
+            conn.execute(text("RELEASE SAVEPOINT _idx"))
+        except Exception as e:
+            try:
+                conn.execute(text("ROLLBACK TO SAVEPOINT _idx"))
+            except Exception:
+                pass
+            logger.warning(f"Índice omitido: {e}")
+
+
 async def init_db():
     """Inicializa las tablas de SQLAlchemy y aplica migraciones de columnas."""
     import db.models  # Import models here to register them with Base
@@ -81,6 +112,8 @@ async def init_db():
         await conn.run_sync(_apply_migrations)
         # 2. Create any table that doesn't exist yet
         await conn.run_sync(Base.metadata.create_all)
+        # 3. Índices de consulta (idempotente)
+        await conn.run_sync(_apply_indexes)
     logger.info("Tablas de SQLAlchemy creadas/verificadas.")
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
